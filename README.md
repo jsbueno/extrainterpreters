@@ -43,4 +43,7 @@ As for the data passing mechanism: we will use pickle, no doubt. If
 "mmap" is the best idea, (in contrast with the os.pipe demonstrated
 in PEP 554 examples) remain to be seem.
 
+Probably comming up with more than one way to send/get data from other
+interpreters as well. The initial implementation is using a pre-allocated
+mmaped file.
 

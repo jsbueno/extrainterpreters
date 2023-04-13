@@ -3,6 +3,7 @@ import os, sys
 import pickle
 import mmap
 import tempfile
+import weakref
 
 from textwrap import dedent as D
 
@@ -23,6 +24,8 @@ except ImportError:
 BFSZ = 10_000_000
 RET_OFFSET = 8_000_000
 
+running_interpreters = weakref.WeakSet()
+
 class Interpreter:
     """High level Interpreter object
 
@@ -34,16 +37,18 @@ class Interpreter:
     and the sub-interpreter will execute code in that thread.
 
     Pickle is used to translate functions to the subinterpreter - so
-    only pick-able callables can be used.
+    only pickle-able callables can be used.
     """
 
     # TBD: add async interface
 
     def __init__(self):
         self.intno = None
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
     def start(self):
+        if self.intno is not None:
+            raise RuntimeError("Interpreter already started")
         with self.lock:
             self.intno = interpreters.create()
             self.fname = tempfile.mktemp()
@@ -52,14 +57,20 @@ class Interpreter:
             self.fileno = self.file.fileno()
             self.map = mmap.mmap(self.fileno, BFSZ)
             self.thread = None
+            running_interpreters.add(self)
             self._init_interpreter()
-            return self
+        return self
 
     __enter__ = start
 
     def close(self, *args):
         with self.lock:
-            interpreters.destroy(self.intno)
+            #if self.thread:
+                #self.thread.join()  # TBD: add a timeout
+            try:
+                interpreters.destroy(self.intno)
+            except RuntimeError:
+                raise  ## raised if interpreter is running. TBD: add a timeout mechanism
             try:
                 self.map.close()
                 self.file.close()
@@ -68,6 +79,10 @@ class Interpreter:
             self.map = None
             self.intno = False
         self.thread = None
+        try:
+            running_interpreters.remove(self)
+        except keyError:
+            pass
         # TBD: check if there was a task running in a thread,
         # if so, and it is done, retrieve the result for further
         # use.
@@ -98,6 +113,11 @@ class Interpreter:
                 _m.seek(RET_OFFSET)
                 pickle.dump(result, _m)
 
+            def _exit():
+                global _m
+                _m.close()
+                del _m
+
         """)
         interpreters.run_string(self.intno, code)
 
@@ -127,11 +147,11 @@ class Interpreter:
 
         # TBD: allow multi-threaded parallel calls (in parent intertpreter)
         # to sub-interpreter.
-
         if self.intno is None:
             raise RuntimeError(D("""\
                 Sub-interpreter not initialized. Call ".start()" or enter context to make calls.
             """))
+
         self.map[RET_OFFSET] == 0
         kwargs = kwargs or {}
         self.map.seek(0)
@@ -144,11 +164,15 @@ class Interpreter:
         except interpreters.RunFailedError as error:
             self.map[RET_OFFSET] = True
             self.exception = error
+            print(f"Failing code\n {func}(*{args}, **{kwargs})\n, passed as {code}", file=sys.stderr)
             raise
+
+    def run_string(self, code):
+        return interpreters.run_string(self.intno, code)
 
     def done(self):
         # TBD: check interpreters.is_running?
-        return self.map[RET_OFFSET] == 0
+        return self.map[RET_OFFSET] != 0
 
     def result(self):
         if not self.done:
@@ -161,4 +185,21 @@ class Interpreter:
         return result
 
     def __repr__(self):
-        return f"Sub-Interpreter <#. {self.intno}>"
+        return f"Sub-Interpreter <#{self.intno}>"
+
+    def __del__(self):
+        # thou shall not leak
+        # (At a subinterpreter + 10MB tempfile, that is expensive!)
+        # Maybe even add an "at_exit" handler to really kill those files.
+        if getattr(self, "intno", None):
+            self.close()
+
+
+def list_all():
+    """Returns a weakset with all active Interpreter instances
+
+    The idea is to have the same API available in "interpreters" working
+    for the higher level objects. But converting the weakset to a full list
+    could result in dangling references we don't want.
+    """
+    return running_interpreters
