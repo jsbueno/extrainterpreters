@@ -55,21 +55,33 @@ def test_running_threaded_call_works():
     assert interp.result() == 1.0
     interp.close()
 
-def to_run_remotely():
-    import time
-    time.sleep(time_res * 2)
-    return 42
 
-def test_running_threaded_call_works_local():
+@pytest.fixture
+def add_current_path():
     import sys
     path = sys.path[:]
     sys.path.insert(0, str(Path(__file__).absolute().parent))
-    import helper_01
     try:
-        with extrainterpreters.Interpreter() as interp:
-            assert interp.run_in_thread(helper_01.to_run_remotely)
-            while not interp.done():
-                time.sleep(time_res)
-            assert interp.result() == 42
+        yield
     finally:
         sys.path[:] = path
+
+def test_running_threaded_call_works_local(add_current_path):
+    import sys
+    import helper_01
+    with extrainterpreters.Interpreter() as interp:
+        assert interp.run_in_thread(helper_01.to_run_remotely)
+        while not interp.done():
+            time.sleep(time_res)
+        assert interp.result() == 42
+
+def test_interpreter_fails_trying_to_send_data_larger_than_buffer():
+    with extrainterpreters.Interpreter() as interp:
+        with pytest.raises(RuntimeError):
+            interp.run(str.upper, "a" * (extrainterpreters.BFSZ))
+
+def test_interpreter_fails_trying_to_receive_data_larger_than_buffer():
+    import helper_01
+    with extrainterpreters.Interpreter() as interp:
+        with pytest.raises(RuntimeError):
+            interp.run(helper_01.big_return_payload)

@@ -23,6 +23,8 @@ except ImportError:
 
 BFSZ = 10_000_000
 RET_OFFSET = 8_000_000
+PAYLOAD_BUFFER = RET_OFFSET
+RETURN_BUFFER = BFSZ - RET_OFFSET
 
 running_interpreters = weakref.WeakSet()
 
@@ -155,9 +157,15 @@ class Interpreter:
         self.map[RET_OFFSET] == 0
         kwargs = kwargs or {}
         self.map.seek(0)
-        pickle.dump(func, self.map)
-        pickle.dump(args, self.map)
-        pickle.dump(kwargs, self.map)
+        _failed = False
+        for obj in (func, args, kwargs):
+            try:
+                pickle.dump(obj, self.map)
+            except ValueError:
+                _failed = True
+            if _failed or self.map.tell() >= BFSZ - RET_OFFSET:
+                raise RuntimeError("Payload to subinterpreter larger than payload buffer {PAYLOAD_BUFFER}. Call cancelled")
+
         code = "_call(0)"
         try:
             interpreters.run_string(self.intno, code)
