@@ -66,6 +66,7 @@ def add_current_path():
     finally:
         sys.path[:] = path
 
+
 def test_running_threaded_call_works_local(add_current_path):
     import sys
     import helper_01
@@ -75,12 +76,27 @@ def test_running_threaded_call_works_local(add_current_path):
             time.sleep(time_res)
         assert interp.result() == 42
 
+
+@pytest.mark.skip("Closing the interpreter fails if 'is_running' is called while it is running. Wait for fix in interpreters or workaround")
+def test_interpreter_is_running(add_current_path):
+    import sys
+    import helper_01
+    with extrainterpreters.Interpreter() as interp:
+        assert interp.run_in_thread(helper_01.to_run_remotely)
+        while not interp.done():
+            #assert interpreters.is_runnining(interp.intno)
+            assert interp.is_running()
+            time.sleep(time_res)
+        assert not interp.is_running()
+
+
 def test_interpreter_fails_trying_to_send_data_larger_than_buffer():
     with extrainterpreters.Interpreter() as interp:
         with pytest.raises(RuntimeError):
             interp.run(str.upper, "a" * (extrainterpreters.BFSZ))
 
-def test_interpreter_fails_trying_to_receive_data_larger_than_buffer():
+
+def test_interpreter_fails_trying_to_receive_data_larger_than_buffer(add_current_path):
     import helper_01
     with extrainterpreters.Interpreter() as interp:
         with pytest.raises(RuntimeError):

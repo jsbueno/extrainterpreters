@@ -4,6 +4,7 @@ import pickle
 import mmap
 import tempfile
 import weakref
+from pathlib import Path
 
 from textwrap import dedent as D
 
@@ -154,6 +155,15 @@ class Interpreter:
                 Sub-interpreter not initialized. Call ".start()" or enter context to make calls.
             """))
 
+        revert_main_name = False
+        if getattr(func, "__module__", None) == "__main__":
+            if (mod_name:=getattr(mod_name:=sys.modules["__main__"], "__file__", None)):
+                revert_main_name = True
+                mod = __import__(Path(mod_name).stem)
+                func = getattr(mod, func.__name__)
+            else:
+                raise NotImplementedError("can't work with functions defined in interactive mode yet")
+
         self.map[RET_OFFSET] == 0
         kwargs = kwargs or {}
         self.map.seek(0)
@@ -166,6 +176,9 @@ class Interpreter:
             if _failed or self.map.tell() >= BFSZ - RET_OFFSET:
                 raise RuntimeError("Payload to subinterpreter larger than payload buffer {PAYLOAD_BUFFER}. Call cancelled")
 
+        if revert_main_name:
+            mod.__name__ = "__main__"
+
         code = "_call(0)"
         try:
             interpreters.run_string(self.intno, code)
@@ -176,7 +189,21 @@ class Interpreter:
             raise
 
     def run_string(self, code):
+        """Execs a string of code in associated interpreter
+
+        Mostly to mirror interpreters.run_string as a convenient method.
+        """
         return interpreters.run_string(self.intno, code)
+
+    def is_running(self):
+        """Proxies interpreters.is_running
+
+        Can be used instead of "done" to check if work
+        in a threaded call has ended.
+        """
+        with self.lock:
+            return interpreters.is_running(self.intno)
+    del is_running # : currently not working. will raise when the interpreter is destroyed.
 
     def done(self):
         # TBD: check interpreters.is_running?
