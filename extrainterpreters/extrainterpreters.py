@@ -140,6 +140,29 @@ class Interpreter:
         self.thread.start()
         return True
 
+    def _source_handle(self, func):
+        if func.__name__ in self._source_handled and hash(func) == self._source_handled[func.__name__]:
+            return
+        import inspect
+        source = inspect.getsource(func)
+        self.run_string(source)  # "types" function in remote interpreter __main__
+
+    def _prepare_interactive(self, func):
+        # try to rebuild the environment of the interactive interpreter
+        # in the sub-interpreter
+
+        assert func.__module__ == "__main__"
+        import inspect
+
+        if not hasattr(self, "_source_handled"):
+            self._source_handled = {}
+
+        self._source_handle(func)
+
+        #main_module = sys.modules["__main__"]
+        #main_globals = main_module.__dict__
+
+
     def execute(self, func, args=(), kwargs=None):
         """Lower level function to actual dispatch the call
         to the subinterpreter in the current running thread.
@@ -162,7 +185,7 @@ class Interpreter:
                 mod = __import__(Path(mod_name).stem)
                 func = getattr(mod, func.__name__)
             else:
-                raise NotImplementedError("can't work with functions defined in interactive mode yet")
+                self._prepare_interactive(func)
 
         self.map[RET_OFFSET] == 0
         kwargs = kwargs or {}
