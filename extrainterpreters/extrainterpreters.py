@@ -1,3 +1,4 @@
+import inspect
 import threading
 import os, sys
 import pickle
@@ -5,6 +6,7 @@ import mmap
 import tempfile
 import weakref
 from pathlib import Path
+from types import ModuleType, FunctionType
 
 from textwrap import dedent as D
 
@@ -141,27 +143,63 @@ class Interpreter:
         return True
 
     def _source_handle(self, func):
+
         if func.__name__ in self._source_handled and hash(func) == self._source_handled[func.__name__]:
             return
-        import inspect
         source = inspect.getsource(func)
         self.run_string(source)  # "types" function in remote interpreter __main__
+        self._source_handled[func.__name__] = hash(func)
+
+    def _handle_module(self, mod_name):
+        if mod_name and not mod_name in self._source_handled:
+            try:
+                self.run_string(f"import {mod_name}")
+                self._source_handled[mod_name] = "module"
+            except interpreters.RunFailedError:
+                # certain modules won't load in subinterpreters.
+                # if the called function would need them, it would
+                # not work all the same.
+                pass
 
     def _prepare_interactive(self, func):
-        # try to rebuild the environment of the interactive interpreter
-        # in the sub-interpreter
+        # rebuilds part of the environment of the interactive interpreter
+        # in the sub-interpreter - including a interactively typed function
+        # thre are limits for what can reasonably be done here:
+        # we will inspect the globals in the interactive shell
+        # and import all root-level modules in the sub-interpreter
+        # but not sub-modules. e.g.: if the user imported "math"
+        # we will import that into the sub interpreter.
+        # if the user imported "xml.etree", just
+        # "xml" will be imported, and if the user tries
+        # to use "xml.etree" inside the interactive
+        # function, that will fail.
 
         assert func.__module__ == "__main__"
-        import inspect
 
         if not hasattr(self, "_source_handled"):
             self._source_handled = {}
 
         self._source_handle(func)
 
-        #main_module = sys.modules["__main__"]
-        #main_globals = main_module.__dict__
+        main_module = sys.modules["__main__"]
+        main_globals = main_module.__dict__
 
+        for name, obj in list(main_globals.items()):
+            if isinstance(obj, FunctionType):
+                if (mod_name:=getattr(obj, "__module__", None)) == "__main__":
+                    self._source_handle(obj)
+                else:
+                    self._handle_module(mod_name)
+                    # Poor man's "from x import y"
+                    if func.__name__ not in self._source_handled:
+                        self.run_string(f"{name} = getattr({mod_name}, '{obj.__name__}')")
+            elif isinstance(obj, ModuleType):
+                mod_name = obj.__name__
+                self._handle_module(mod_name)
+                if mod_name != name and name not in self._source_handled:
+                    self.run_string(f"{name} = {mod_name}")
+            # Test: is it worth setting literal objects that might be
+            # used as global variables?
 
     def execute(self, func, args=(), kwargs=None):
         """Lower level function to actual dispatch the call
