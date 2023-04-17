@@ -367,6 +367,63 @@ class WorkerOpcodes: # WorkerOpecodes
     run_string = 5
 
 
+class clsproperty:
+    def __init__(self, method):
+        self.method = method
+
+    def __set_name__(self, owner, name):
+        self.name = name
+
+    def __get__(self, intance, owner):
+        return self.method(owner)
+
+    def __repr__(self):
+        return f"clsproperty <{self.name}>"
+
+
+class Field:
+    def __init__(self, bytesize):
+        self.size = bytesize
+
+    def _calc_offset(self, owner):
+        offset = 0
+        for name, obj in owner.__dict__.items():
+            if not isinstance(obj, Field):
+                continue
+            if obj is self:
+                return offset
+            offset += obj.size
+
+    def __set_name__(self, owner, name):
+        self.offset = self._calc_offset(owner)
+        self.name = name
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self
+        off = instance._offset + self.offset
+        return int.from_bytes(instance._data[off: off + self.size], "little")
+
+    def __set__(self, instance, value):
+        off = instance._offset + self.offset
+        instance._data[off: off + self.size] = value.to_bytes(self.size, "little")
+
+
+class StructBase:
+    slots = ("_data", "_offset")
+    def __init__(self, _data, _offset):
+        self._data = _data
+        self._offset = _offset
+
+    @clsproperty
+    def size(cls):
+        size = 0
+        for name, obj in cls.__dict__.items():
+            if isinstance(obj, Field):
+                size += obj.size
+        return size
+
+
 class PipedInterpreter(BaseInterpreter):
 
     def _create_channel(self):
