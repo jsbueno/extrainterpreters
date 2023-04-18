@@ -101,3 +101,8 @@ def test_interpreter_fails_trying_to_receive_data_larger_than_buffer(add_current
     with extrainterpreters.Interpreter() as interp:
         with pytest.raises(RuntimeError):
             interp.run(helper_01.big_return_payload)
+
+
+def text_extrainterprters_can_be_imported_in_sub_interpreter():
+    with extrainterpreters.Interpreter() as interp:
+        interp.run_string("import extrainterpreters")

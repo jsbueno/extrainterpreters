@@ -26,9 +26,9 @@ except ImportError:
 
 
 BFSZ = 10_000_000
-RET_OFFSET = 8_000_000
-PAYLOAD_BUFFER = RET_OFFSET
-RETURN_BUFFER = BFSZ - RET_OFFSET
+# RET_OFFSET = 8_000_000
+# PAYLOAD_BUFFER = RET_OFFSET
+# RETURN_BUFFER = BFSZ - RET_OFFSET
 
 running_interpreters = weakref.WeakSet()
 
@@ -92,8 +92,6 @@ class BaseInterpreter:
     Pickle is used to translate functions to the subinterpreter - so
     only pickle-able callables can be used.
     """
-
-    # TBD: add async interface
 
     def __init__(self):
         self.intno = None
@@ -179,7 +177,7 @@ class BaseInterpreter:
     def _prepare_interactive(self, func):
         # rebuilds part of the environment of the interactive interpreter
         # in the sub-interpreter - including a interactively typed function
-        # thre are limits for what can reasonably be done here:
+        # there are limits for what can reasonably be done here:
         # we will inspect the globals in the interactive shell
         # and import all root-level modules in the sub-interpreter
         # but not sub-modules. e.g.: if the user imported "math"
@@ -216,57 +214,10 @@ class BaseInterpreter:
             # Test: is it worth setting literal objects that might be
             # used as global variables?
 
+
+
     def execute(self, func, args=(), kwargs=None):
-        """Lower level function to actual dispatch the call
-        to the subinterpreter in the current running thread.
-
-        Prefer to use `.run` to run in the same thread
-        or `.run_in_thread` for now.
-        """
-
-        # TBD: allow multi-threaded parallel calls (in parent intertpreter)
-        # to sub-interpreter.
-        if self.intno is None:
-            raise RuntimeError(D("""\
-                Sub-interpreter not initialized. Call ".start()" or enter context to make calls.
-                """))
-
-        revert_main_name = False
-        if getattr(func, "__module__", None) == "__main__":
-            if (mod_name:=getattr(mod_name:=sys.modules["__main__"], "__file__", None)):
-                revert_main_name = True
-                mod = __import__(Path(mod_name).stem)
-                func = getattr(mod, func.__name__)
-            else:
-                self._prepare_interactive(func)
-
-        self.map[RET_OFFSET] == 0
-        kwargs = kwargs or {}
-        self.map.seek(0)
-        _failed = False
-        for obj in (func, args, kwargs):
-            try:
-                pickle.dump(obj, self.map)
-            except ValueError:
-                _failed = True
-            if _failed or self.map.tell() >= BFSZ - RET_OFFSET:
-                raise RuntimeError(D(f"""\
-                    Payload to subinterpreter larger than payload buffer.
-                    Call cancelled. If needed, just make buffer larger by tweaking
-                    extrainterpreters' {BFSZ=} and {RET_OFFSET=} values.
-                    """))
-
-        if revert_main_name:
-            mod.__name__ = "__main__"
-
-        code = "_call(0)"
-        try:
-            interpreters.run_string(self.intno, code)
-        except interpreters.RunFailedError as error:
-            self.map[RET_OFFSET] = True
-            self.exception = error
-            print(f"Failing code\n {func}(*{args}, **{kwargs})\n, passed as {code}", file=sys.stderr)
-            raise
+        raise NotImplementedError()
 
     def run_string(self, code):
         """Execs a string of code in associated interpreter
@@ -285,14 +236,11 @@ class BaseInterpreter:
             return interpreters.is_running(self.intno)
     del is_running # : currently not working. will raise when the interpreter is destroyed.
 
-    def done(self):
-        # TBD: check interpreters.is_running?
-        return self.map[RET_OFFSET] != 0
 
     def result(self):
         if not self.done:
             raise InvalidState("Task not completed in subinterpreter")
-        self.map.seek(RET_OFFSET)
+        self.map.seek(self.buffer.nranges["return_data"])
         result = pickle.load(self.map)
         if self.thread:
             self.thread.join()
@@ -305,9 +253,12 @@ class BaseInterpreter:
     def __del__(self):
         # thou shall not leak
         # (At a subinterpreter + 10MB tempfile, that is expensive!)
-        # Maybe even add an "at_exit" handler to really kill those files.
         if getattr(self, "intno", None):
             self.close()
+
+    def done(self):
+        raise NotImplementedError()
+
 
 class MMapInterpreter(BaseInterpreter):
 
@@ -331,8 +282,8 @@ class MMapInterpreter(BaseInterpreter):
             import sys
             sys.path[:] = {sys.path}
 
-            BFSZ = {BFSZ}
-            RET_OFFSET = {RET_OFFSET}
+            BFSZ = {self.buffer.size}
+            RET_OFFSET = {self.buffer.nranges["return_data"]}
             _m = mmap.mmap({self.buffer.fileno}, BFSZ)
 
             def _thaw(ind_data):
@@ -357,13 +308,65 @@ class MMapInterpreter(BaseInterpreter):
         return code
 
 
-class WorkerOpcodes: # WorkerOpecodes
-    close = 0
-    import_module = 1
-    run_func_no_args = 2
-    run_func_args = 3
-    run_func_args_kwargs = 4
-    run_string = 5
+    def execute(self, func, args=(), kwargs=None):
+        """Lower level function to actual dispatch the call
+        to the subinterpreter in the current running thread.
+
+        Prefer to use `.run` to run in the same thread
+        or `.run_in_thread` for now.
+        """
+
+        # TBD: allow multi-threaded parallel calls (in parent intertpreter)
+        # to sub-interpreter.
+        if self.intno is None:
+            raise RuntimeError(D("""\
+                Sub-interpreter not initialized. Call ".start()" or enter context to make calls.
+                """))
+
+        revert_main_name = False
+        if getattr(func, "__module__", None) == "__main__":
+            if (mod_name:=getattr(mod_name:=sys.modules["__main__"], "__file__", None)):
+                revert_main_name = True
+                mod = __import__(Path(mod_name).stem)
+                func = getattr(mod, func.__name__)
+            else:
+                self._prepare_interactive(func)
+
+        self.map[self.buffer.nranges["return_data"]] == 0
+        self.exception = None
+        kwargs = kwargs or {}
+        self.map.seek(0)
+        _failed = False
+        for obj in (func, args, kwargs):
+            try:
+                pickle.dump(obj, self.map)
+            except ValueError:
+                _failed = True
+            if _failed or self.map.tell() >= self.buffer.range_sizes["send_data"]:
+                raise RuntimeError(D(f"""\
+                    Payload to subinterpreter larger than payload buffer.
+                    Call cancelled. If needed, just make buffer larger by tweaking
+                    extrainterpreters' {BFSZ=} value.
+                    """))
+
+        if revert_main_name:
+            mod.__name__ = "__main__"
+
+        code = "_call(0)"
+        try:
+            interpreters.run_string(self.intno, code)
+        except interpreters.RunFailedError as error:
+            # self.map[RET_OFFSET] = True
+            self.exception = error
+            print(f"Failing code\n {func}(*{args}, **{kwargs})\n, passed as {code}", file=sys.stderr)
+            raise
+
+    def done(self):
+        if self.exception:
+            return True
+        return self.map[self.buffer.nranges["return_data"]] != 0
+
+
 
 
 class clsproperty:
@@ -431,15 +434,69 @@ class StructBase:
         self._data = self._data[self._offset: self._offset + self._size]
         self._offset = 0
 
+class WorkerOpcodes: # WorkerOpecodes
+    close = 0
+    import_module = 1
+    run_func_no_args = 2
+    run_func_args = 3
+    run_func_args_kwargs = 4
+    run_string = 5
+
+
+class ExecModes:
+    immediate = 0
+    new_thread = 1
+    thread_pool = 2
+
+
+class Command(StructBase):
+    opcode = Field(1)
+    exec_mode = Field(1)
+    data_record = Field(2)
+    data_extra = Field(4)
+
+
+
+def dispacther(pipe):
+    while True:
+        data = pipe.read(timeout=0.1)
+        if not data:
+            continue
+        command = Command(data)
+
+
 
 class ProcessBuffer:
-    def __init__(self):
+    def __init__(self, size=BFSZ, ranges: dict[int,str]|None=None):
+        if ranges is None:
+            ranges = {
+                0: "command_area",
+                4096: "send_data",
+                (size // 5 * 4): "return_data"
+            }
+
+        self.size = size
+        self.ranges = ranges
+        self.nranges = {v:k for k, v in ranges.items()}
+        self._init_range_sizes()
         self.fname = tempfile.mktemp()
         self.file = open(self.fname, "w+b")
-        self.file.write(b"\x00" * BFSZ)
+        self.file.write(b"\x00" * self.size)
         self.file.flush()
         self.fileno = self.file.fileno()
-        self.map = mmap.mmap(self.fileno, BFSZ)
+        self.map = mmap.mmap(self.fileno, self.size)
+
+    def _init_range_sizes(self):
+        prev_range = ""
+        last_range_start = 0
+        self.range_sizes = {}
+        for i, (range_name, offset) in enumerate(self.nranges.items()):
+            if i:
+                self.range_sizes[prev_range] = offset - self.nranges[prev_range]
+            prev_range = range_name
+            if offset < last_range_start:
+                raise ValueError("Buffer Range window starts must be in ascending order")
+            last_range_start = offset
 
     def __del__(self):
         # Should be called explicitly by users of the class
