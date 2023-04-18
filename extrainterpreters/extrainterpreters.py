@@ -7,6 +7,7 @@ import mmap
 import selectors
 import tempfile
 import weakref
+import warnings
 from pathlib import Path
 from types import ModuleType, FunctionType
 from textwrap import dedent as D
@@ -42,10 +43,21 @@ class Pipe:
         self.originator_fds = os.pipe()
         self.counterpart_fds = os.pipe()
         self._all_fds = self.originator_fds + self.counterpart_fds
+        self._post_init()
 
     def _post_init(self):
+        self.closed = False
         self._selector = selectors.DefaultSelector()
         self._selector.register(self.counterpart_fds[0], selectors.EVENT_READ, self.read_blocking)
+
+    @classmethod
+    def counterpart_from_fds(cls, originator_fds, counterpart_fds):
+        self = cls.__new__(cls)
+        self.originator_fds = originator_fds
+        self.counterpart_fds = counterpart_fds
+        self._all_fds = ()
+        self._post_init()
+        return self.counterpart
 
     @property
     def counterpart(self):
@@ -57,6 +69,9 @@ class Pipe:
         return new_inst
 
     def send(self, data):
+        if self.closed:
+            warnings.warn("Pipe already closed. No data sent")
+            return
         if isinstance(data, str):
             data = data.encode("utf-8")
         os.write(self.originator_fds[1], data)
@@ -65,6 +80,9 @@ class Pipe:
         return os.read(self.counterpart_fds[0], amount)
 
     def read(self, timeout=0):
+        if self.closed:
+            warnings.warn("Pipe already closed. Not trying to read anything")
+            return b""
         result = b""
         for key, mask in self._selector.select(timeout=timeout):
             v = key.data()
@@ -72,12 +90,18 @@ class Pipe:
                 result = v
         return result
 
-    def __del__(self):
-        for fd in self._all_fds:
+    def close(self):
+        for fd in getattr(self, "_all_fds", ()):
             try:
                 os.close(fd)
             except OSError:
                 pass
+        self.closed = True
+        self._all_fds = ()
+
+    def __del__(self):
+        self.close()
+
 
 class BaseInterpreter:
     """High level Interpreter object
@@ -108,26 +132,28 @@ class BaseInterpreter:
             self._init_interpreter()
         return self
 
-    __enter__ = start
+    def __enter__(self):
+        return self.start()
 
     def _create_channel(self):
         pass
 
     def close(self, *args):
         with self.lock:
+            self._close_channel()
             try:
                 interpreters.destroy(self.intno)
             except RuntimeError:
                 raise  ## raised if interpreter is running. TBD: add a timeout mechanism
             self.intno = False
-            self._close_channel()
         self.thread = None
         try:
             running_interpreters.remove(self)
         except keyError:
             pass
 
-    __exit__ = close
+    def __exit__(self, *args):
+        return self.close(*args)
 
     def _close_channel(self):
         pass
@@ -271,7 +297,6 @@ class MMapInterpreter(BaseInterpreter):
         with self.lock:
             self.buffer.__del__()
             self.map = None
-            self.intno = False
         super()._close_channel()
 
     def _interp_init_code(self):
@@ -335,7 +360,7 @@ class MMapInterpreter(BaseInterpreter):
         self.map[self.buffer.nranges["return_data"]] == 0
         self.exception = None
         kwargs = kwargs or {}
-        self.map.seek(0)
+        self.map.seek(self.buffer.nranges["send_data"])
         _failed = False
         for obj in (func, args, kwargs):
             try:
@@ -352,7 +377,7 @@ class MMapInterpreter(BaseInterpreter):
         if revert_main_name:
             mod.__name__ = "__main__"
 
-        code = "_call(0)"
+        code = f"""_call({self.buffer.nranges["send_data"]})"""
         try:
             interpreters.run_string(self.intno, code)
         except interpreters.RunFailedError as error:
@@ -415,12 +440,33 @@ class StructBase:
     """A Struct type class which can attach to offsets in an existing memory buffer
 
     Currently, only different sized integer fields are implemented.
+
+    Methods and propertys start with "_" just to avoid nae clashes with fields.
+    Feel free to use anything here. (use is by subclassing and defining fields)
     """
 
     slots = ("_data", "_offset")
-    def __init__(self, _data, _offset):
+    def __init__(self, _data, _offset=0):
         self._data = _data
         self._offset = _offset
+
+    @clsproperty
+    def _fields(cls):
+        for k, v in cls.__dict__.items():
+            if isinstance(v, Field):
+                yield k
+
+    @classmethod
+    def _from_values(cls, *args):
+        data = bytearray(b"\x00" * cls._size)
+        self = cls(data, 0)
+        for arg, field_name in zip(args, self._fields):
+            setattr(self, field_name, arg)
+        return self
+
+    @property
+    def _bytes(self):
+        return bytes(self._data[self._offset: self._offset + self._size])
 
     @clsproperty
     def _size(cls):
@@ -443,6 +489,8 @@ class WorkerOpcodes: # WorkerOpecodes
     run_string = 5
 
 
+WO = WorkerOpcodes
+
 class ExecModes:
     immediate = 0
     new_thread = 1
@@ -455,15 +503,41 @@ class Command(StructBase):
     data_record = Field(2)
     data_extra = Field(4)
 
+class FuncData(StructBase):
+    data_offset = Field(4)
 
 
-def dispacther(pipe):
+def _dispatcher(pipe, mmap):
+    """the core running function in a PipedInterpreter
+
+    This is responsible for watching comunications with the parent
+    interpreter, dispathing execution, and place the return values
+    """
+
     while True:
-        data = pipe.read(timeout=0.1)
-        if not data:
-            continue
-        command = Command(data)
+        try:
+            data = pipe.read(timeout=0.1)
+            if not data:
+                continue
+            command = Command(data)
+            if command.opcode == WO.close:
+                break
+            if command.opcode == WO.run_func_args_kwargs:
+                funcdata = FuncData(mmap, FuncData._size * command.data_record)
+                mmap.seek(funcdata.data_offset)
+                func = pickle.load(mmap)
+                args = pickle.load(mmap)
+                kwargs = pickle.load(mmap)
+                if command.exec_mode == ExecModes.immediate:
+                    result = func(*args, **kwargs)
+                    pipe.send(pickle.dumps(result))
 
+            else:
+                pass  # opcode not implemented
+        except Exception as err:
+            # TBD: define exceptions policy
+            print(err, f"in interpreter {interpreters.get_current()}\n\n", file=sys.stderr)
+    pipe.send(b"ok")
 
 
 class ProcessBuffer:
@@ -516,19 +590,52 @@ class ProcessBuffer:
         return f"<Mmaped interprocess buffer with {BFSZ:_} bytes>"
 
 
-""" #WIP
-class PipedInterpreter(BaseInterpreter):
+class PipedInterpreter(MMapInterpreter):
 
     def _create_channel(self):
-        self.pipe = Pipe(os.pipe)
+        super()._create_channel()
+        self.pipe = Pipe()
+
+    def _interp_init_code(self):
+        code = super()._interp_init_code()
+        code += D(f"""\
+            import extrainterpreters
+            import threading
+
+            pipe = extrainterpreters.Pipe.counterpart_from_fds({self.pipe.originator_fds}, {self.pipe.counterpart_fds})
+            disp_thread = threading.Thread(target=extrainterpreters._dispatcher, args=(pipe, _m))
+            disp_thread.start()
+        """)
+        return code
+
+    def execute(self, func, args=(), kwargs=None):
+        # WIP: find out free range in buffer
+        slot = 0
+        cmd = Command._from_values(WO.run_func_args_kwargs, ExecModes.immediate, slot, 0)
+        data_offset = self.buffer.nranges["send_data"]
+        self.map.seek(data_offset)
+        pickle.dump(func, self.map)
+        pickle.dump(args, self.map)
+        pickle.dump(kwargs, self.map)
+        exec_data = FuncData(self.map, slot * FuncData._size)
+        exec_data.data_offset = data_offset
+        self.pipe.send(cmd._bytes)
+
+    def result(self):
+        # if last command exec_mode was "immediate":
+        return pickle.loads(self.pipe.read(timeout=0.01))
+
+    def _create_channel(self):
+        self.pipe = Pipe()
         super()._create_channel()
 
     def _close_channel(self):
         with self.lock:
-            os.close(self.pipe.reader)
-            os.close(self.pipe.writer)
-        super().close()
-"""
+            self.pipe.send(Command._from_values(WO.close, 0, 0, 0)._bytes)
+            self.pipe.read(timeout=None)
+            self.pipe.close()
+        super()._close_channel()
+
 
 Interpreter = MMapInterpreter
 

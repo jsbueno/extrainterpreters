@@ -47,3 +47,22 @@ def test_struct_detach():
     assert s.data_offset == 1000
     assert s.length == 2_000_000
 
+
+def test_struct_from_values():
+    class Struct(StructBase):
+        data_offset = Field(2)
+        length = Field(4)
+
+    s = Struct._from_values(1000, 2_000_000)
+    assert s.data_offset == 1000
+    assert s.length == 2_000_000
+
+
+
+def test_struct_bytes():
+    class Struct(StructBase):
+        data_offset = Field(2)
+
+    s = Struct(bytearray(b"ZZ"))
+
+    assert s._bytes == b"ZZ"
