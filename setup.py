@@ -1,6 +1,14 @@
 import setuptools
 from pathlib import Path
 
+memoryboard_module = [
+    setuptools.Extension(
+        'extrainterpreters._memoryboard', sources=['extrainterpreters/extrainterpreters/memoryboard.c'],
+        include_dirs=[],
+        extra_compile_args=['-O3', '-march=native'],
+        language='c'
+    )
+]
 
 setuptools.setup(
     name="extrainterpreters",
@@ -12,6 +20,7 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     url="https://github.com/jsbueno/extrainterpreters",
     packages=setuptools.find_packages(),
+    ext_modules=memoryboard_module,
     package_dir={'': 'extrainterpreters'},
     classifiers=[
         "Programming Language :: Python :: 3",
@@ -24,4 +33,5 @@ setuptools.setup(
     python_requires='>=3.12-alpha',
     tests_require=['pytest'],
     setup_requires=['pytest-runner'],
+    install_requires=['Cython', 'wheel'],
 )
