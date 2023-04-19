@@ -4,7 +4,7 @@ from pathlib import Path
 
 setuptools.setup(
     name="extrainterpreters",
-    version="0.1-dev",
+    version="0.1-dev1",
     author="João S. O. Bueno",
     author_email="gwidion@gmail.com",
     description="Utilities for concurrent code using subinterpreters",

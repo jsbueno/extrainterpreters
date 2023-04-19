@@ -104,18 +104,6 @@ class Pipe:
 
 
 class BaseInterpreter:
-    """High level Interpreter object
-
-    Simply instantiate this, and use as a context manager
-    (or call `.start()` to make calls that will execute in the
-    subinterpreter.
-
-    If the `run_in_thread` call is used, a new thread is created
-    and the sub-interpreter will execute code in that thread.
-
-    Pickle is used to translate functions to the subinterpreter - so
-    only pickle-able callables can be used.
-    """
 
     def __init__(self):
         self.intno = None
@@ -149,7 +137,7 @@ class BaseInterpreter:
         self.thread = None
         try:
             running_interpreters.remove(self)
-        except keyError:
+        except KeyError:
             pass
 
     def __exit__(self, *args):
@@ -287,6 +275,22 @@ class BaseInterpreter:
 
 
 class MMapInterpreter(BaseInterpreter):
+    """High level Interpreter object
+
+    Simply instantiate this, and use as a context manager
+    (or call `.start()` to make calls that will execute in the
+    subinterpreter.
+
+
+    If the `run_in_thread` call is used, a new thread is created
+    and the sub-interpreter will execute code in that thread.
+
+    Pickle is used to translate functions to the subinterpreter - so
+    only pickle-able callables can be used.
+
+    This implementation uses an mmapd temporary file (by default of 10MB), to send pickeld objects back and fort at fixed offsets.
+    """
+
 
     def _create_channel(self):
         self.buffer = ProcessBuffer()
@@ -357,7 +361,7 @@ class MMapInterpreter(BaseInterpreter):
             else:
                 self._prepare_interactive(func)
 
-        self.map[self.buffer.nranges["return_data"]] == 0
+        self.map[self.buffer.nranges["return_data"]] = 0
         self.exception = None
         kwargs = kwargs or {}
         self.map.seek(self.buffer.nranges["send_data"])
@@ -520,20 +524,21 @@ def _dispatcher(pipe, mmap):
             if not data:
                 continue
             command = Command(data)
-            if command.opcode == WO.close:
-                break
-            if command.opcode == WO.run_func_args_kwargs:
-                funcdata = FuncData(mmap, FuncData._size * command.data_record)
-                mmap.seek(funcdata.data_offset)
-                func = pickle.load(mmap)
-                args = pickle.load(mmap)
-                kwargs = pickle.load(mmap)
-                if command.exec_mode == ExecModes.immediate:
-                    result = func(*args, **kwargs)
-                    pipe.send(pickle.dumps(result))
+            match command.opcode:
+                case WO.close:
+                    break
+                case WO.run_func_args_kwargs:
+                    funcdata = FuncData(mmap, FuncData._size * command.data_record)
+                    mmap.seek(funcdata.data_offset)
+                    func = pickle.load(mmap)
+                    args = pickle.load(mmap)
+                    kwargs = pickle.load(mmap)
+                    if command.exec_mode == ExecModes.immediate:
+                        result = func(*args, **kwargs)
+                        pipe.send(pickle.dumps(result))
 
-            else:
-                pass  # opcode not implemented
+                case _:
+                    pass  # opcode not implemented
         except Exception as err:
             # TBD: define exceptions policy
             print(err, f"in interpreter {interpreters.get_current()}\n\n", file=sys.stderr)
