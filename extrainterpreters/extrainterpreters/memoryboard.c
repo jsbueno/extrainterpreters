@@ -13,7 +13,6 @@ THIS IS UNSAFE AND WILL CRASH THE PROCESS IF USED INCORRECTLY.\
 
 static PyObject *_memoryboard_remote_memory(PyObject *self, PyObject *args)
 {
-    Py_buffer buf;
     unsigned long size;
     Py_ssize_t tmp;
     char *memory;
@@ -24,32 +23,43 @@ static PyObject *_memoryboard_remote_memory(PyObject *self, PyObject *args)
 
     memory = (char *)tmp;
 
-    // Fill the buffer with zeros
-    // memset(buf.buf, 0, buf.len);
-
     return PyMemoryView_FromMemory(memory, size, PyBUF_WRITE);
 
-//return Py_BuildValue("y#", buf.buf, buf.len);
+}
+
+
+PyDoc_STRVAR(_memoryboard_get_address_and_size_doc,
+"getaddress_and_size(buffer_obj) -> (buffer_address, buffer_lenght)\n\
+\n\
+Returns the memory address and lenght of an object that \
+implements the buffer protocol. The return is suitable \
+as input of remote_memory.\n\
+However, unlike high-level Python objects, the source\n\
+object must not be disposed or reallocated if the \n\
+memoryview returned by remote_memory is in use.\
+");
+
+static PyObject *_memoryboard_get_address_and_size(PyObject *self, PyObject *args)
+{
+    Py_buffer buffer;
+    PyObject buffer_address, size;
+
+    if (!PyArg_ParseTuple(args, "y*", &buffer)) {
+        return NULL;
+    }
+
+    return Py_BuildValue(
+      "(OO)",
+     PyLong_FromSsize_t((Py_ssize_t)buffer.buf),
+     PyLong_FromLong(buffer.len)
+    );
 }
 
 static PyMethodDef _memoryboard_methods[] = {
     {"remote_memory", _memoryboard_remote_memory, METH_VARARGS, _memoryboard_remote_memory_doc},
+    {"address_and_size", _memoryboard_get_address_and_size, METH_VARARGS, _memoryboard_get_address_and_size_doc},
     {NULL, NULL, 0, NULL}
 };
-
-// static struct PyModuleDef _memoryboard = {
-//     PyModuleDef_HEAD_INIT,
-//     "_memoryboard",
-//     NULL,
-//     -1,
-//     methods
-// };
-//
-// PyMODINIT_FUNC PyInit__memoryboard(void)
-// {
-//     return PyModule_Create(&_memoryboard);
-// }
-
 
 PyDoc_STRVAR(module_doc,
 "Native functions for extrainterpreters usage.");
