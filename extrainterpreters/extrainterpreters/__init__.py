@@ -299,21 +299,22 @@ class MMapInterpreter(BaseInterpreter):
 
     def _close_channel(self):
         with self.lock:
-            self.buffer.__del__()
+            self.buffer.close()
             self.map = None
         super()._close_channel()
 
     def _interp_init_code(self):
         code = super()._interp_init_code()
         code += D(f"""\
-            import mmap
             import pickle
             import sys
             sys.path[:] = {sys.path}
+            from extrainterpreters import _memoryboard
+            from extrainterpreters import memoryboard
 
             BFSZ = {self.buffer.size}
             RET_OFFSET = {self.buffer.nranges["return_data"]}
-            _m = mmap.mmap({self.buffer.fileno}, BFSZ)
+            _m = memoryboard.FileLikeArray(_memoryboard.remote_memory(*{self.buffer._data_for_remote()}))
 
             def _thaw(ind_data):
                 _m.seek(ind_data)

@@ -92,14 +92,14 @@ def test_interpreter_is_running(add_current_path):
 
 def test_interpreter_fails_trying_to_send_data_larger_than_buffer():
     with extrainterpreters.Interpreter() as interp:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(BufferError):
             interp.run(str.upper, "a" * (extrainterpreters.BFSZ))
 
 
 def test_interpreter_fails_trying_to_receive_data_larger_than_buffer(add_current_path):
     import helper_01
     with extrainterpreters.Interpreter() as interp:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(interpreters.RunFailedError):
             interp.run(helper_01.big_return_payload)
 
 
