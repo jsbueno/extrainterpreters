@@ -3,25 +3,7 @@ import pickle
 import weakref
 from textwrap import dedent as D
 
-
-try:
-    import interpreters
-except ImportError:
-    try:
-        import _xxsubinterpreters as interpreters
-    except ImportError:
-        raise ImportError(D("""
-            interpreters module not available in this Python install.
-            If you are early to it (before 3.12 beta), you need to build the
-            per-interpreter-gil-new branch from
-            https://github.com/ericsnowcurrently/cpython.git
-            """))
-
-
-BFSZ = 10_000_000
-
-running_interpreters = weakref.WeakSet()
-
+from . import BFSZ, interpreters, running_interpreters
 from .memoryboard import ProcessBuffer
 from .base_interpreter import BaseInterpreter
 from .pipe import Pipe

@@ -5,20 +5,8 @@ import pickle
 from types import ModuleType, FunctionType
 from textwrap import dedent as D
 
-try:
-    import interpreters
-except ImportError:
-    try:
-        import _xxsubinterpreters as interpreters
-    except ImportError:
-        raise ImportError(D("""
-            interpreters module not available in this Python install.
-            If you are early to it (before 3.12 beta), you need to build the
-            per-interpreter-gil-new branch from
-            https://github.com/ericsnowcurrently/cpython.git
-            """))
 
-from . import BFSZ, running_interpreters
+from . import interpreters, BFSZ, running_interpreters
 
 class BaseInterpreter:
 
