@@ -1,16 +1,9 @@
-import atexit
 import inspect
 import threading
-import os, sys
+import sys
 import pickle
-import selectors
-import weakref
-import warnings
-from pathlib import Path
 from types import ModuleType, FunctionType
 from textwrap import dedent as D
-
-from .memoryboard import ProcessBuffer
 
 try:
     import interpreters
@@ -177,7 +170,7 @@ class BaseInterpreter:
 
     def result(self):
         if not self.done:
-            raise InvalidState("Task not completed in subinterpreter")
+            raise ValueError("Task not completed in subinterpreter")
         self.map.seek(self.buffer.nranges["return_data"])
         result = pickle.load(self.map)
         if self.thread:
