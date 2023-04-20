@@ -36,8 +36,6 @@ running_interpreters = weakref.WeakSet()
 
 class Pipe:
     """Full Duplex Pipe class.
-
-
     """
     def __init__(self):
         self.originator_fds = os.pipe()
@@ -274,7 +272,7 @@ class BaseInterpreter:
         raise NotImplementedError()
 
 
-class MMapInterpreter(BaseInterpreter):
+class SimpleInterpreter(BaseInterpreter):
     """High level Interpreter object
 
     Simply instantiate this, and use as a context manager
@@ -288,12 +286,12 @@ class MMapInterpreter(BaseInterpreter):
     Pickle is used to translate functions to the subinterpreter - so
     only pickle-able callables can be used.
 
-    This implementation uses an mmapd temporary file (by default of 10MB), to send pickeld objects back and fort at fixed offsets.
+    This implementation uses a memory area  (by default of 10MB), to send pickled objects back and fort at fixed offsets.
     """
 
 
     def _create_channel(self):
-        self.buffer = ProcessBuffer()
+        self.buffer = ProcessBuffer(BFSZ)
         self.map = self.buffer.map
         super()._create_channel()
 
@@ -512,7 +510,7 @@ class FuncData(StructBase):
     data_offset = Field(4)
 
 
-def _dispatcher(pipe, mmap):
+def _dispatcher(pipe, buffer):
     """the core running function in a PipedInterpreter
 
     This is responsible for watching comunications with the parent
@@ -529,11 +527,11 @@ def _dispatcher(pipe, mmap):
                 case WO.close:
                     break
                 case WO.run_func_args_kwargs:
-                    funcdata = FuncData(mmap, FuncData._size * command.data_record)
-                    mmap.seek(funcdata.data_offset)
-                    func = pickle.load(mmap)
-                    args = pickle.load(mmap)
-                    kwargs = pickle.load(mmap)
+                    funcdata = FuncData(buffer, FuncData._size * command.data_record)
+                    buffer.seek(funcdata.data_offset)
+                    func = pickle.load(buffer)
+                    args = pickle.load(buffer)
+                    kwargs = pickle.load(buffer)
                     if command.exec_mode == ExecModes.immediate:
                         result = func(*args, **kwargs)
                         pipe.send(pickle.dumps(result))
@@ -547,7 +545,7 @@ def _dispatcher(pipe, mmap):
 
 
 
-class PipedInterpreter(MMapInterpreter):
+class PipedInterpreter(SimpleInterpreter):
 
     def _create_channel(self):
         super()._create_channel()
@@ -594,7 +592,7 @@ class PipedInterpreter(MMapInterpreter):
         super()._close_channel()
 
 
-Interpreter = MMapInterpreter
+Interpreter = SimpleInterpreter
 
 
 
