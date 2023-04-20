@@ -7,7 +7,7 @@ from . import BFSZ, interpreters, running_interpreters
 from .memoryboard import ProcessBuffer
 from .base_interpreter import BaseInterpreter
 from .pipe import Pipe
-from .simple_interpreter import SimpleInterpreter
+from .simple_interpreter import _BufferedInterpreter
 
 
 class clsproperty:
@@ -157,8 +157,7 @@ def _dispatcher(pipe, buffer):
     pipe.send(b"ok")
 
 
-
-class PipedInterpreter(SimpleInterpreter):
+class PipedInterpreter(_BufferedInterpreter):
 
     def _interp_init_code(self):
         code = super()._interp_init_code()

@@ -133,10 +133,13 @@ class BaseInterpreter:
             # Test: is it worth setting literal objects that might be
             # used as global variables?
 
-
-
     def execute(self, func, args=(), kwargs=None):
-        raise NotImplementedError()
+        # to sub-interpreter.
+        if self.intno is None:
+            raise RuntimeError(D("""\
+                Sub-interpreter not initialized. Call ".start()" or enter context to make calls.
+                """))
+
 
     def run_string(self, code):
         """Execs a string of code in associated interpreter
@@ -155,16 +158,8 @@ class BaseInterpreter:
             return interpreters.is_running(self.intno)
     del is_running # : currently not working. will raise when the interpreter is destroyed.
 
-
     def result(self):
-        if not self.done:
-            raise ValueError("Task not completed in subinterpreter")
-        self.map.seek(self.buffer.nranges["return_data"])
-        result = pickle.load(self.map)
-        if self.thread:
-            self.thread.join()
-            self.thread = None
-        return result
+        raise NotImplementedError()
 
     def __repr__(self):
         return f"Sub-Interpreter <#{self.intno}>"

@@ -7,23 +7,10 @@ from . import BFSZ, interpreters
 from .memoryboard import ProcessBuffer
 from .base_interpreter import BaseInterpreter
 
-class SimpleInterpreter(BaseInterpreter):
-    """High level Interpreter object
-
-    Simply instantiate this, and use as a context manager
-    (or call `.start()` to make calls that will execute in the
-    subinterpreter.
-
-
-    If the `run_in_thread` call is used, a new thread is created
-    and the sub-interpreter will execute code in that thread.
-
-    Pickle is used to translate functions to the subinterpreter - so
-    only pickle-able callables can be used.
-
-    This implementation uses a memory area  (by default of 10MB), to send pickled objects back and fort at fixed offsets.
+class _BufferedInterpreter(BaseInterpreter):
+    """Internal class holding methods to be used
+    as building blocks for the final classes
     """
-
 
     def _create_channel(self):
         self.buffer = ProcessBuffer(BFSZ)
@@ -70,6 +57,66 @@ class SimpleInterpreter(BaseInterpreter):
         """)
         return code
 
+    def done(self):
+        if self.exception:
+            return True
+        return self.map[self.buffer.nranges["return_data"]] != 0
+
+    def result(self):
+        if not self.done():
+            raise ValueError("Task not completed in subinterpreter")
+        if self.exception:
+            raise ValueError("An exception ocurred in the subinterpreter. Check the `.exception` attribute")
+        if hasattr(self, "_cached_result"):
+            return self._cached_result
+        self.map.seek(self.buffer.nranges["return_data"])
+        result = pickle.load(self.map)
+        if self.thread:
+            self.thread.join()
+            self.thread = None
+        self._cached_result = result
+        return result
+
+
+class SimpleInterpreter(_BufferedInterpreter):
+    """High level Interpreter object
+
+    Simply instantiate this, and use as a context manager
+    (or call `.start()`) to make calls that will execute in the
+    subinterpreter.
+
+    If the `run_in_thread` call is used, a new thread is created
+    and the sub-interpreter will execute code in that thread.
+
+    Also, the semantics of "threading.Thread" is given for convenience:
+    if the class is instantiated with a "target" function (along with
+    optional args and kwargs), upon calling "start()", the new
+    interpreter will imediatelly run the target function.
+    Checking when its done, and the return value can be done
+    by calling the `.done()` and `.result()` methods.
+
+    Pickle is used to translate functions to the subinterpreter - so
+    only pickle-able callables can be used.
+
+    This implementation uses a memory area  (by default of 10MB), to send pickled objects back and fort at fixed offsets.
+    """
+
+    def __init__(self, target=None, args=(), kwargs=None):
+        kwargs = kwargs or {}
+        super().__init__()
+        self.target = target
+        self.args = args
+        self.kwargs = kwargs
+
+    def start(self):
+        super().start()
+        if self.target:
+            self.run_in_thread(self.target, *self.args, **self.kwargs)
+        return self
+
+    def join(self):
+        while not self.done():
+            time.sleep(0.01)
 
     def execute(self, func, args=(), kwargs=None):
         """Lower level function to actual dispatch the call
@@ -78,13 +125,15 @@ class SimpleInterpreter(BaseInterpreter):
         Prefer to use `.run` to run in the same thread
         or `.run_in_thread` for now.
         """
+        kwargs = kwargs or {}
 
-        # TBD: allow multi-threaded parallel calls (in parent intertpreter)
-        # to sub-interpreter.
-        if self.intno is None:
-            raise RuntimeError(D("""\
-                Sub-interpreter not initialized. Call ".start()" or enter context to make calls.
-                """))
+        super().execute(func, args, kwargs) # NOP on the interpreter, but sets internal states.
+        self.map[self.buffer.nranges["return_data"]] = 0
+        self.exception = None
+        try:
+            del self._cached_result
+        except AttributeError:
+            pass
 
         revert_main_name = False
         if getattr(func, "__module__", None) == "__main__":
@@ -95,9 +144,6 @@ class SimpleInterpreter(BaseInterpreter):
             else:
                 self._prepare_interactive(func)
 
-        self.map[self.buffer.nranges["return_data"]] = 0
-        self.exception = None
-        kwargs = kwargs or {}
         self.map.seek(self.buffer.nranges["send_data"])
         _failed = False
         for obj in (func, args, kwargs):
@@ -123,10 +169,5 @@ class SimpleInterpreter(BaseInterpreter):
             self.exception = error
             print(f"Failing code\n {func}(*{args}, **{kwargs})\n, passed as {code}", file=sys.stderr)
             raise
-
-    def done(self):
-        if self.exception:
-            return True
-        return self.map[self.buffer.nranges["return_data"]] != 0
 
 
