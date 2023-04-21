@@ -1,11 +1,13 @@
 import sys
 import pickle
+import time
 from pathlib import Path
 from textwrap import dedent as D
 
 from . import BFSZ, interpreters
 from .memoryboard import ProcessBuffer
 from .base_interpreter import BaseInterpreter
+
 
 class _BufferedInterpreter(BaseInterpreter):
     """Internal class holding methods to be used
@@ -58,7 +60,7 @@ class _BufferedInterpreter(BaseInterpreter):
         return code
 
     def done(self):
-        if self.exception:
+        if self.exception or hasattr(self, "_cached_result"):
             return True
         return self.map[self.buffer.nranges["return_data"]] != 0
 
@@ -95,6 +97,16 @@ class SimpleInterpreter(_BufferedInterpreter):
     Checking when its done, and the return value can be done
     by calling the `.done()` and `.result()` methods.
 
+    Subclassing and overriding `.run`, as in threading.Thread
+    is __not__ supported, though: unlike an instance of a (subclass of)
+    Thread, the instance of Interpreter does not exist in the sub-interpreter, and it can't be simply pickled and unpickled there.
+    Although executing the `run()` method as a simple function,
+    which could be "transplanted into a dummy class" is feasible,
+    projects that prefer overriding "run" over using a "target="
+    argument may try to enrich the subclass itself
+    with other methods and capabilities - that would be
+    too complicated to send to the sub-interpreter.
+
     Pickle is used to translate functions to the subinterpreter - so
     only pickle-able callables can be used.
 
@@ -105,18 +117,35 @@ class SimpleInterpreter(_BufferedInterpreter):
         kwargs = kwargs or {}
         super().__init__()
         self.target = target
-        self.args = args
-        self.kwargs = kwargs
+        self._args = args
+        self._kwargs = kwargs
 
     def start(self):
         super().start()
         if self.target:
-            self.run_in_thread(self.target, *self.args, **self.kwargs)
+            self.run_in_thread(self.target, *self._args, **self._kwargs)
         return self
 
     def join(self):
+        """Analog to Thread.join()
+
+        Waits until an off-thread task is completed
+        in the sub-interpreter and closes the interpreter.
+
+        Task may have been started either with a "target" argument
+        when instantiating this interpreter, or with a
+        call to "run_in_thread".
+
+        After joining a call to ".result()"can retrieve
+        the return value.
+        """
         while not self.done():
-            time.sleep(0.01)
+            time.sleep(0.005)
+        if not self.exception:
+            # caches the return value before tearing down
+            # the memory buffer.
+            self.result()
+        self.close()
 
     def execute(self, func, args=(), kwargs=None):
         """Lower level function to actual dispatch the call

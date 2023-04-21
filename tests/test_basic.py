@@ -26,7 +26,7 @@ def test_extrainterpreters_list_all():
 
     assert interp not in extrainterpreters.list_all()
 
-def test_interpreter_if_out_of_scope_without_explicit_close():
+def test_interpreter_closes_out_of_scope():
     intno = None
     def inner():
         nonlocal intno
@@ -103,6 +103,18 @@ def test_interpreter_fails_trying_to_receive_data_larger_than_buffer(add_current
             interp.run(helper_01.big_return_payload)
 
 
-def text_extrainterprters_can_be_imported_in_sub_interpreter():
+def text_extrainterpreters_can_be_imported_in_sub_interpreter():
     with extrainterpreters.Interpreter() as interp:
         interp.run_string("import extrainterpreters")
+
+
+def test_interpreter_target_argument_(add_current_path):
+    import sys
+    import helper_01
+    interp = extrainterpreters.Interpreter(
+        target=helper_01.to_run_remotely)
+    assert not interp.intno
+    interp.start()
+    assert interp.intno
+    interp.join()
+    assert interp.result() == 42
