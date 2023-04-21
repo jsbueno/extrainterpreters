@@ -6,7 +6,7 @@ from textwrap import dedent as D
 from . import BFSZ, interpreters, running_interpreters
 from .memoryboard import ProcessBuffer
 from .base_interpreter import BaseInterpreter
-from .pipe import Pipe
+from .queue import Pipe
 from .simple_interpreter import _BufferedInterpreter
 
 

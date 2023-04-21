@@ -23,7 +23,7 @@ running_interpreters = weakref.WeakSet()
 
 from .memoryboard import ProcessBuffer
 from .base_interpreter import BaseInterpreter
-from .pipe import Pipe
+from .queue import Pipe
 from .simple_interpreter import SimpleInterpreter as Interpreter
 from .piped_interpreter import StructBase, Field, PipedInterpreter
 

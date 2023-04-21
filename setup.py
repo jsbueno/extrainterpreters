@@ -3,7 +3,7 @@ from pathlib import Path
 
 memoryboard_module = [
     setuptools.Extension(
-        'extrainterpreters._memoryboard', sources=['extrainterpreters/extrainterpreters/memoryboard.c'],
+        'extrainterpreters._memoryboard', sources=['src/extrainterpreters/memoryboard.c'],
         include_dirs=[],
         extra_compile_args=['-O3', '-march=native'],
         language='c'
@@ -21,7 +21,7 @@ setuptools.setup(
     url="https://github.com/jsbueno/extrainterpreters",
     packages=setuptools.find_packages(),
     ext_modules=memoryboard_module,
-    package_dir={'': 'extrainterpreters'},
+    package_dir={'': 'src'},
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
