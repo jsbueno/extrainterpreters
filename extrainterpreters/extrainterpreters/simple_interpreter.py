@@ -119,6 +119,7 @@ class SimpleInterpreter(_BufferedInterpreter):
         self.target = target
         self._args = args
         self._kwargs = kwargs
+        self.exception = None
 
     def start(self):
         super().start()
@@ -141,10 +142,6 @@ class SimpleInterpreter(_BufferedInterpreter):
         """
         while not self.done():
             time.sleep(0.005)
-        if not self.exception:
-            # caches the return value before tearing down
-            # the memory buffer.
-            self.result()
         self.close()
 
     def execute(self, func, args=(), kwargs=None):
@@ -199,4 +196,11 @@ class SimpleInterpreter(_BufferedInterpreter):
             print(f"Failing code\n {func}(*{args}, **{kwargs})\n, passed as {code}", file=sys.stderr)
             raise
 
-
+    def close(self, *args):
+        if self.done():
+            try:
+                # Caches an eventual result so it is available after closing
+                self.result()
+            except Exception as err:
+                pass
+        return super().close(*args)

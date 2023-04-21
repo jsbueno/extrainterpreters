@@ -108,7 +108,7 @@ def text_extrainterpreters_can_be_imported_in_sub_interpreter():
         interp.run_string("import extrainterpreters")
 
 
-def test_interpreter_target_argument_(add_current_path):
+def test_interpreter_target_argument(add_current_path):
     import sys
     import helper_01
     interp = extrainterpreters.Interpreter(
@@ -118,3 +118,36 @@ def test_interpreter_target_argument_(add_current_path):
     assert interp.intno
     interp.join()
     assert interp.result() == 42
+
+
+def test_interpreter_run_can_instantiate_class(add_current_path):
+    import sys
+    import helper_01
+    with extrainterpreters.Interpreter() as interp:
+        assert interp.run_in_thread(helper_01.RemoteClass)
+        while not interp.done():
+            time.sleep(time_res)
+        assert isinstance(interp.result(), helper_01.RemoteClass)
+
+
+def test_interpreter_run_can_call_classmethod(add_current_path):
+    import sys
+    import helper_01
+    with extrainterpreters.Interpreter() as interp:
+        assert interp.run_in_thread(helper_01.RemoteClass.to_run_remotely_2)
+        while not interp.done():
+            time.sleep(time_res)
+    assert interp.result() == 42
+
+
+def test_interpreter_run_can_call_callable(add_current_path):
+    import sys
+    import helper_01
+    with extrainterpreters.Interpreter() as interp:
+        inst = helper_01.RemoteClass()
+        interp.run_in_thread(inst)
+        while not interp.done():
+            time.sleep(time_res)
+    assert interp.result() == 23
+
+
