@@ -166,7 +166,7 @@ class PipedInterpreter(_BufferedInterpreter):
             import threading
 
             pipe = extrainterpreters.Pipe.counterpart_from_fds({self.pipe.originator_fds}, {self.pipe.counterpart_fds})
-            disp_thread = threading.Thread(target=extrainterpreters._dispatcher, args=(pipe, _m))
+            disp_thread = threading.Thread(target=extrainterpreters.piped_interpreter._dispatcher, args=(pipe, _m))
             disp_thread.start()
         """)
         return code
