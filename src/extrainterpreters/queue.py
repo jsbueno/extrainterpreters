@@ -72,16 +72,28 @@ class Pipe:
     def read_blocking(self, amount=4096):
         return os.read(self.counterpart_fds[0], amount)
 
-    def read(self, timeout=0):
+    def _read_ready(self, timeout=0):
+        events = self._selector.select(timeout=timeout)
+        if len(events) == 1 and events[0][0].fd == self.counterpart_fds[0]:
+            return True
+        return False
+
+    def readline(self):
+        # needed by pickle.load
+        result = []
+        read_byte = ...
+        while read_byte and read_byte != '\n':
+            result.append(read_byte:=self.read(1))
+        return b"".join(result)
+
+    def read(self, amount=4096, timeout=0):
         if self.closed:
             warnings.warn("Pipe already closed. Not trying to read anything")
             return b""
         result = b""
-        for key, mask in self._selector.select(timeout=timeout):
-            v = key.data()
-            if key.fd == self.counterpart_fds[0]:
-                result = v
-        return result
+        if self._read_ready(timeout):
+            return self.read_blocking(amount)
+        return b""
 
     def close(self):
         for fd in getattr(self, "_all_fds", ()):
@@ -235,7 +247,7 @@ class SingleQueue:
         """Remove and return an item from the queue. If optional args block is true and timeout is None (the default), block if necessary until an item is available. If timeout is a positive number, it blocks at most timeout seconds and raises the Empty exception if no item was available within that time. Otherwise (block is false), return an item if one is immediately available, else raise the Empty exception (timeout is ignored in that case).
         """
         # TBD: many fails. fix
-        return pickle.loads(self.pipe.read())
+        return pickle.load(self.pipe)
 
     def get_nowait(self):
         """Equivalent to get(False)"""
