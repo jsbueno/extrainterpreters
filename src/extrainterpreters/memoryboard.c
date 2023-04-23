@@ -1,13 +1,15 @@
 #include <Python.h>
+#include <stdatomic.h>
 
 PyDoc_STRVAR(_memoryboard_remote_memory_doc,
 "remote_memory(buffer_address, buffer_length)\n\
 \n\
-For internal extrainterpreters uses only \
-Returns a writable memoryview object pointing to the\
+For internal extrainterpreters use only!\n\n\
+\
+Returns a writable memoryview object pointing to \
 the indicated memory. \n\
 \n\
-THIS IS UNSAFE AND WILL CRASH THE PROCESS IF USED INCORRECTLY.\
+THIS IS UNSAFE AND _WILL_ CRASH THE PROCESS IF USED INCORRECTLY.\
 ");
 
 
@@ -18,6 +20,10 @@ static PyObject *_memoryboard_remote_memory(PyObject *self, PyObject *args)
     char *memory;
 
     if (!PyArg_ParseTuple(args, "nk", &tmp, &size)) {
+        return NULL;
+    }
+
+    if (tmp == NULL) {
         return NULL;
     }
 
@@ -42,7 +48,6 @@ memoryview returned by remote_memory is in use.\
 static PyObject *_memoryboard_get_address_and_size(PyObject *self, PyObject *args)
 {
     Py_buffer buffer;
-    PyObject buffer_address, size;
 
     if (!PyArg_ParseTuple(args, "y*", &buffer)) {
         return NULL;
@@ -55,9 +60,40 @@ static PyObject *_memoryboard_get_address_and_size(PyObject *self, PyObject *arg
     );
 }
 
+PyDoc_STRVAR(_atomic_byte_loc_doc,
+"_atomic_byte_loc(byte_address) -> bool\n\
+\n\
+Returns true if the byte at given address is incread from 0 to 1\n\n\
+\
+(addressable with the _memoryboard_get_address_and_size protocols \
+or ctypes) is successfully atomically found to be zero, and increased to one \
+using standard C functionality for atomic data.\n\n\
+\
+This call can be used to build absolute locks accross\n\
+interpreters and threads in pure Python.\n\
+");
+
+static PyObject *_atomic_byte_loc(PyObject *self, PyObject *args)
+{
+    Py_ssize_t address;
+    atomic_char *target;
+
+    if (!PyArg_ParseTuple(args, "n", &address)) {
+        return NULL;
+    }
+
+    target = (atomic_char *) address;
+    if (*target == 0 && (++*target) == 1) {
+        Py_RETURN_TRUE;
+    }
+
+    Py_RETURN_FALSE;
+}
+
 static PyMethodDef _memoryboard_methods[] = {
     {"remote_memory", _memoryboard_remote_memory, METH_VARARGS, _memoryboard_remote_memory_doc},
     {"address_and_size", _memoryboard_get_address_and_size, METH_VARARGS, _memoryboard_get_address_and_size_doc},
+    {"atomic_byte_lock", _atomic_byte_loc, METH_VARARGS, _atomic_byte_loc_doc},
     {NULL, NULL, 0, NULL}
 };
 

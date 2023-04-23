@@ -361,3 +361,16 @@ class SingleQueue:
 
     def __del__(self):
         self.pipe.close()
+
+
+
+# [WIP]
+class MultiplexEnd: #(_QueueChannelBase):
+
+    def __init__(self, pipe):
+        pass
+
+    @_child_only
+    def get(self, block=True, timeout=None):
+        """retrieves a controled lockable block"""
+        pass

@@ -51,7 +51,7 @@ def _dispatcher(pipe, buffer):
             data = pipe.read(timeout=0.1)
             if not data:
                 continue
-            command = Command(data)
+            command = Command._from_data(data)
             match command.opcode:
                 case WO.close:
                     break
@@ -96,7 +96,7 @@ class PipedInterpreter(_BufferedInterpreter):
         pickle.dump(func, self.map)
         pickle.dump(args, self.map)
         pickle.dump(kwargs, self.map)
-        exec_data = FuncData(self.map, slot * FuncData._size)
+        exec_data = FuncData._from_data(self.map, slot * FuncData._size)
         exec_data.data_offset = data_offset
         self.pipe.send(cmd._bytes)
 

@@ -22,6 +22,7 @@ def test_singlequeue_is_unpickled_as_counterpart_and_comunicates():
     interp = Interpreter().start()
     interp.run_string("import pickle")
     aa = SingleQueue()
+    # Creates queue end in the sub-interpreter:
     interp.run_string(f"bb = pickle.loads({pickle.dumps(aa)})")
     obj = {"1": "1234", None: ...}
     aa.put(obj)
