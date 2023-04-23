@@ -67,8 +67,17 @@ class FileLikeArray:
     def __repr__(self):
         return f"<self.__class__.__name__ with {len(self)} bytes>"
 
+class BufferBase:
+    map: "object offering buffer interface" # TBD: check if this is declarable as a valid typehint
 
-class ProcessBuffer:
+    def _data_for_remote(self):
+        return _memoryboard.address_and_size(self.map.data)
+
+    def close(self):
+        self.map = None
+
+
+class ProcessBuffer(BufferBase):
     def __init__(self, size, ranges: dict[int,str]|None=None):
         if ranges is None:
             ranges = {
@@ -95,11 +104,16 @@ class ProcessBuffer:
                 raise ValueError("Buffer Range window starts must be in ascending order")
             last_range_start = offset
 
-    def _data_for_remote(self):
-        return _memoryboard.address_and_size(self.map.data)
-
-    def close(self):
-        self.map = None
-
     def __repr__(self):
         return f"<interprocess buffer with {self.size:_} bytes>"
+
+
+
+
+class OwnableBuffer(BufferBase):
+    def __init__(self, data):
+        """'use-once' read-only buffer meant to be read by a single peer
+
+        The buffer prefixes data meant to ensure just one sub-process is
+        the owner and unpickles the payload
+        """

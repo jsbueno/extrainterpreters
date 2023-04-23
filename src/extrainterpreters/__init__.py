@@ -25,8 +25,7 @@ from .memoryboard import ProcessBuffer
 from .base_interpreter import BaseInterpreter
 from .queue import Pipe, SingleQueue
 from .simple_interpreter import SimpleInterpreter as Interpreter
-from .piped_interpreter import StructBase, Field, PipedInterpreter
-
+from .piped_interpreter import Field, PipedInterpreter
 
 def list_all():
     """Returns a weakset with all active Interpreter instances
