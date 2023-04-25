@@ -89,9 +89,18 @@ class FileLikeArray:
     def seek(self, pos):
         self._cursor = pos
 
-    @guard_internal_use
     def _data_for_remote(self):
         return _address_and_size(self.data)
+
+    def __getstate__(self):
+        ns = {"buffer_data": self._data_for_remote()}
+        return ns
+
+    def __setstate__(self, state):
+        data = _remote_memory(*state["buffer_data"])
+        self._lock = threading.RLock()
+        self.data = data
+        self._cursor = 0
 
     def __repr__(self):
         return f"<{self.__class__.__name__} with {len(self)} bytes>"
