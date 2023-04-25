@@ -94,8 +94,8 @@ class SimpleInterpreter(_BufferedInterpreter):
     if the class is instantiated with a "target" function (along with
     optional args and kwargs), upon calling "start()", the new
     interpreter will imediatelly run the target function.
-    Checking when its done, and the return value can be done
-    by calling the `.done()` and `.result()` methods.
+    Checking when its done, and the return value can be checked
+    by calling `join()` or  `.done()` and `.result()` methods.
 
     Subclassing and overriding `.run`, as in threading.Thread
     is __not__ supported, though: unlike an instance of a (subclass of)
@@ -164,6 +164,10 @@ class SimpleInterpreter(_BufferedInterpreter):
         revert_main_name = False
         if getattr(func, "__module__", None) == "__main__":
             if (mod_name:=getattr(mod_name:=sys.modules["__main__"], "__file__", None)):
+                # changing the module name from "__main__" to its
+                # normal importable name makes functions and
+                # classes on it able to be unpickled on
+                # target interpreters.
                 revert_main_name = True
                 mod = __import__(Path(mod_name).stem)
                 func = getattr(mod, func.__name__)

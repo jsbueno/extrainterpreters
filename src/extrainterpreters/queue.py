@@ -59,9 +59,21 @@ class StructBase:
     """
 
     slots = ("_data", "_offset")
-    def __init__(self, _data, _offset=0):
+
+    def __init__(self, **kwargs):
+        self._offset = 0
+        self._data = bytearray(b"\x00" * self._size)
+        for field_name in self._fields:
+            setattr(self, field_name, kwargs.pop(field_name))
+        if kwargs:
+            raise ValueError(f"Unknown fields {kwargs} passed to {self.__class__.__name__}")
+
+    @classmethod
+    def _from_data(cls, _data, _offset=0):
+        self = cls.__new__(cls)
         self._data = _data
         self._offset = _offset
+        return self
 
     @clsproperty
     def _fields(cls):
@@ -364,7 +376,7 @@ class SingleQueue:
 
 
 
-# [WIP]
+
 class MultiplexEnd: #(_QueueChannelBase):
 
     def __init__(self, pipe):
@@ -373,4 +385,4 @@ class MultiplexEnd: #(_QueueChannelBase):
     @_child_only
     def get(self, block=True, timeout=None):
         """retrieves a controled lockable block"""
-        pass
+

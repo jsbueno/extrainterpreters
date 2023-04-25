@@ -4,6 +4,7 @@ import threading
 
 from collections.abc import MutableSequence
 
+from . import interpreters
 from . import _memoryboard
 from .queue import Field, StructBase
 
@@ -67,7 +68,7 @@ class FileLikeArray:
         self._cursor = pos
 
     def __repr__(self):
-        return f"<self.__class__.__name__ with {len(self)} bytes>"
+        return f"<{self.__class__.__name__} with {len(self)} bytes>"
 
 class BufferBase:
     map: FileLikeArray
@@ -118,8 +119,8 @@ class State:
     not_initialized = 0
     building = 1
     ready = 2
-    lock_started = 3
-    lock_complete = 4
+    locked = 3
+    # lock_complete = 4
     garbage = 5
 
 
@@ -141,7 +142,6 @@ class LockableBoardParent(BufferBase):
         #self.root = LockableBoardRoot.from_data(self.map, 0)
         #self.root.size = 0
         self.blocks = {}
-
 
     def new_item(self, data):
         data = OwnableBuffer(pickle.dumps(data))
@@ -166,15 +166,17 @@ class LockableBoardParent(BufferBase):
             raise ValueError("Invalid State")
         self.blocks.pop(offset, None)
         control.state = State.not_initialized
+        control.content_address = 0
 
     def collect(self):
         data = self.map.data
         free_blocks = 0
-        for offset in range(0, len(data), BlockLock._size):
+        for index in range(0, self._size):
             # block = BlockLock(self.map, offset)
             # if block.lock == LockState.garbage:
-            # TBD: benchemark things with
+            # TBD: benchmark things with
             # the above two lines instead of the "low level":
+            offset = index * BlockLock._size
             if data[offset] == State.garbage:
                 del self.blocks[offset]
                 data[offset] = data[offset + 1] = 0
@@ -187,7 +189,7 @@ class LockableBoardParent(BufferBase):
         id_ = threading.current_thread().native_id
         data = self.map.data
         for offset in range(0, len(data), BlockLock._size):
-            if data[offset] == 5:
+            if data[offset] == State.garbage:
                 del self.blocks[offset]
                 data[offset] = data[offset + 1] = 0
             if data[offset] == 0 and data[offset+1] == 0:
@@ -211,6 +213,48 @@ class LockableBoardParent(BufferBase):
         free_blocks = self.collect()
         return f"LockableBoard with {free_blocks} free slots."
 
+
+class LockableBoardChild(BufferBase):
+    def __init__(self, buffer_ptr, buffer_length):
+        self.map = FileLikeArray(_memoryboard.remote_memory(buffer_ptr, buffer_length))
+        self._size = len(self.map) // BlockLock._size
+        #self.start_offset = random.randint(0, self._size)
+
+    def get_work_data(self):
+        control = BlockLock._from_data(self.map, 0)
+        for index in range(0, self._size):
+            offset = index * BlockLock._size
+            control._offset = offset
+            if control.state != State.ready:
+                continue
+            lock_ptr = self._data_for_remote()[0] + offset + 1
+            if _memoryboard.atomic_byte_lock(lock_ptr):
+                break
+        else:
+            return None
+        control.owner = threading.current_thread().native_id
+        control.state = State.locked
+        control.lock = 0
+        buffer = _memoryboard.remote_memory(control.content_address, control.content_length)
+        data = pickle.loads(buffer)
+        del buffer
+        control.state = State.garbage
+        # TBD: caller could have a channel to comunicate the parent thread its done
+        # with the buffer.
+        return index, data
+
+    def __delitem__(self, index):
+        raise TypeError("Removal of blocks can only happen on parent-side of Buffer")
+
+    def __getitem__(self, index):
+        offset = BlockLock._size * index
+        return BlockLock._from_data(self.map, offset)
+
+    def __del__(self):
+        self.close()
+
+    def __repr__(self):
+        return f"<Child LockableBoard on interpreter {interpreters.get_current()}>"
 
 
 class OwnableBuffer(BufferBase):

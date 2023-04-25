@@ -90,7 +90,7 @@ class PipedInterpreter(_BufferedInterpreter):
     def execute(self, func, args=(), kwargs=None):
         # WIP: find out free range in buffer
         slot = 0
-        cmd = Command._from_values(WO.run_func_args_kwargs, ExecModes.immediate, slot, 0)
+        cmd = Command(opcode=WO.run_func_args_kwargs, exec_mode=ExecModes.immediate, data_record=slot, data_extra=0)
         data_offset = self.buffer.nranges["send_data"]
         self.map.seek(data_offset)
         pickle.dump(func, self.map)
