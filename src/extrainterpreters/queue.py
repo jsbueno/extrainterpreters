@@ -21,6 +21,7 @@ class clsproperty:
     def __repr__(self):
         return f"clsproperty <{self.name}>"
 
+
 class Field:
     def __init__(self, bytesize):
         self.size = bytesize
@@ -110,6 +111,7 @@ class StructBase:
         for field_name in self._fields:
             field_data.append(f"    {field_name} = {getattr(self, field_name)}")
         return(f"{self.__class__.__name__}:\n{"\n".join(field_data)}\n")
+
 
 class Pipe:
     """Full Duplex Pipe class.

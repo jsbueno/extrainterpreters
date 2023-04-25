@@ -1,12 +1,34 @@
 import os
 import pickle
 import threading
+import sys
+from functools import wraps
 
 from collections.abc import MutableSequence
 
 from . import interpreters
 from . import _memoryboard
 from .queue import Field, StructBase
+
+def guard_internal_use(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        f = sys._getframe().f_back
+        if sys.modules["extrainterpreters"].__dict__.get("DEBUG", False):
+            pass
+        elif not f.f_globals.get("__name__").startswith("extrainterpreters."):
+            raise RuntimeError(f"{func.__name__} can only be called from extrainterpreters code, under risk of causing a segmentation fault")
+        return func(*args, **kwargs)
+    return wrapper
+
+
+from ._memoryboard import remote_memory, address_and_size, atomic_byte_lock
+
+_remote_memory = guard_internal_use(remote_memory)
+_address_and_size = guard_internal_use(address_and_size)
+_atomic_byte_lock = guard_internal_use(atomic_byte_lock)
+
+del remote_memory, address_and_size, atomic_byte_lock
 
 @MutableSequence.register
 class FileLikeArray:
@@ -67,14 +89,15 @@ class FileLikeArray:
     def seek(self, pos):
         self._cursor = pos
 
+    @guard_internal_use
+    def _data_for_remote(self):
+        return _address_and_size(self.data)
+
     def __repr__(self):
         return f"<{self.__class__.__name__} with {len(self)} bytes>"
 
 class BufferBase:
     map: FileLikeArray
-
-    def _data_for_remote(self):
-        return _memoryboard.address_and_size(self.map.data)
 
     def close(self):
         self.map = None
@@ -146,7 +169,7 @@ class LockableBoardParent(BufferBase):
     def new_item(self, data):
         data = OwnableBuffer(pickle.dumps(data))
         offset, control = self.get_free_block()
-        control.content_address, control.content_length = data._data_for_remote()
+        control.content_address, control.content_length = data.map._data_for_remote()
         self.blocks[offset] = data
         control.owner = 0
         control.state = State.ready
@@ -193,8 +216,8 @@ class LockableBoardParent(BufferBase):
                 del self.blocks[offset]
                 data[offset] = data[offset + 1] = 0
             if data[offset] == 0 and data[offset+1] == 0:
-                lock_ptr = self._data_for_remote()[0] + offset + 1
-                if not _memoryboard.atomic_byte_lock(lock_ptr):
+                lock_ptr = self.map._data_for_remote()[0] + offset + 1
+                if not _atomic_byte_lock(lock_ptr):
                     continue
                 # we are the now sole owners of the block.
                 block = BlockLock._from_data(self.map, offset)
@@ -216,7 +239,7 @@ class LockableBoardParent(BufferBase):
 
 class LockableBoardChild(BufferBase):
     def __init__(self, buffer_ptr, buffer_length):
-        self.map = FileLikeArray(_memoryboard.remote_memory(buffer_ptr, buffer_length))
+        self.map = FileLikeArray(_remote_memory(buffer_ptr, buffer_length))
         self._size = len(self.map) // BlockLock._size
         #self.start_offset = random.randint(0, self._size)
 
@@ -227,15 +250,15 @@ class LockableBoardChild(BufferBase):
             control._offset = offset
             if control.state != State.ready:
                 continue
-            lock_ptr = self._data_for_remote()[0] + offset + 1
-            if _memoryboard.atomic_byte_lock(lock_ptr):
+            lock_ptr = self.map._data_for_remote()[0] + offset + 1
+            if _atomic_byte_lock(lock_ptr):
                 break
         else:
             return None
         control.owner = threading.current_thread().native_id
         control.state = State.locked
         control.lock = 0
-        buffer = _memoryboard.remote_memory(control.content_address, control.content_length)
+        buffer = _remote_memory(control.content_address, control.content_length)
         data = pickle.loads(buffer)
         del buffer
         control.state = State.garbage

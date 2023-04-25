@@ -36,7 +36,7 @@ class _BufferedInterpreter(BaseInterpreter):
 
             BFSZ = {self.buffer.size}
             RET_OFFSET = {self.buffer.nranges["return_data"]}
-            _m = memoryboard.FileLikeArray(_memoryboard.remote_memory(*{self.buffer._data_for_remote()}))
+            _m = memoryboard.FileLikeArray(_memoryboard.remote_memory(*{self.buffer.map._data_for_remote()}))
 
             def _thaw(ind_data):
                 _m.seek(ind_data)
