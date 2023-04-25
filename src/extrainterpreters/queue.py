@@ -105,6 +105,11 @@ class StructBase:
         self._data = self._data[self._offset: self._offset + self._size]
         self._offset = 0
 
+    def __repr__(self):
+        field_data = []
+        for field_name in self._fields:
+            field_data.append(f"    {field_name} = {getattr(self, field_name)}")
+        return(f"{self.__class__.__name__}:\n{"\n".join(field_data)}\n")
 
 class Pipe:
     """Full Duplex Pipe class.
