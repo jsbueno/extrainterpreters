@@ -8,7 +8,7 @@ from .memoryboard import ProcessBuffer
 from .base_interpreter import BaseInterpreter
 from .queue import Pipe
 from .simple_interpreter import _BufferedInterpreter
-from .queue import Field, StructBase
+from .utils import Field, StructBase
 
 
 

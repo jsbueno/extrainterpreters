@@ -1,4 +1,4 @@
-from extrainterpreters.queue import StructBase, Field
+from extrainterpreters.utils import StructBase, Field
 
 import pytest
 

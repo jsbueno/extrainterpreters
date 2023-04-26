@@ -8,19 +8,7 @@ from collections.abc import MutableSequence
 
 from . import interpreters
 from . import _memoryboard
-from .queue import Field, StructBase
-
-def guard_internal_use(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        f = sys._getframe().f_back
-        if sys.modules["extrainterpreters"].__dict__.get("DEBUG", False):
-            pass
-        elif not f.f_globals.get("__name__").startswith("extrainterpreters."):
-            raise RuntimeError(f"{func.__name__} can only be called from extrainterpreters code, under risk of causing a segmentation fault")
-        return func(*args, **kwargs)
-    return wrapper
-
+from .utils import guard_internal_use, Field, StructBase
 
 from ._memoryboard import remote_memory, address_and_size, atomic_byte_lock
 
@@ -96,6 +84,7 @@ class FileLikeArray:
         ns = {"buffer_data": self._data_for_remote()}
         return ns
 
+    @guard_internal_use
     def __setstate__(self, state):
         data = _remote_memory(*state["buffer_data"])
         self._lock = threading.RLock()
@@ -174,6 +163,16 @@ class LockableBoardParent(BufferBase):
         #self.root = LockableBoardRoot.from_data(self.map, 0)
         #self.root.size = 0
         self.blocks = {}
+
+    def __getstate__(self):
+        ns = self.__dict__.copy()
+        del ns["blocks"]
+        return ns
+
+    @guard_internal_use
+    def __setstate__(self, state):
+        self.__class__ = LockableBoardChild
+        self.__dict__.update(state)
 
     def new_item(self, data):
         data = OwnableBuffer(pickle.dumps(data))

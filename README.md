@@ -22,6 +22,23 @@ thead and call the target function there - the Interpreter instance  then should
 be pooled in its "done()" method, and once done, the return value
 will be available by calling  "result".
 
+Also working is a threading like interface:
+
+```
+from extrainterpreters import Interpreter
+
+...
+
+    interp = Interpreter(target=myfunc, args=(...,))
+    interp.start()
+    ...
+    interp.join()
+
+    # bonus: we have return values!
+
+    print(interp.result()
+```
+
 It will even work for methods defined on the REPL, so, just
 give it a try.
 
@@ -53,6 +70,11 @@ an easy way to schedule a subinterpreter function execution as an async task.
 
 Also, I should come up with a Queue object to pass data back and forth.
 As for the data passing mechanism: we will use pickle, no doubt.
+
+## When is Beta?
+
+As soon as I get to a well thought way of creating the initial buffer
+for comunication with a sub-interpreter.
 
 # Architecture
 The initial implementation used a pre-allocated mmaped file

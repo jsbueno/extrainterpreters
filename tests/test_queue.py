@@ -6,10 +6,11 @@ from extrainterpreters import Interpreter
 import pytest
 
 
-def test_pipe_is_unpickled_as_counterpart_and_comunicates():
+def test_pipe_is_unpickled_as_counterpart_and_comunicates(lowlevel):
     interp = Interpreter().start()
     interp.run_string("import pickle")
     aa = Pipe()
+    interp.run_string("import extrainterpreters; extrainterpreters.DEBUG = True")
     interp.run_string(f"bb = pickle.loads({pickle.dumps(aa)})")
     aa.send(b"01234")
     interp.run_string("cc = bytes(i + 1 for i in bb.read())")
@@ -18,11 +19,12 @@ def test_pipe_is_unpickled_as_counterpart_and_comunicates():
     interp.close()
 
 
-def test_singlequeue_is_unpickled_as_counterpart_and_comunicates():
+def test_singlequeue_is_unpickled_as_counterpart_and_comunicates(lowlevel):
     interp = Interpreter().start()
     interp.run_string("import pickle")
     aa = SingleQueue()
     # Creates queue end in the sub-interpreter:
+    interp.run_string("import extrainterpreters; extrainterpreters.DEBUG = True")
     interp.run_string(f"bb = pickle.loads({pickle.dumps(aa)})")
     obj = {"1": "1234", None: ...}
     aa.put(obj)

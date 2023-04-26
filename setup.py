@@ -33,5 +33,5 @@ setuptools.setup(
     python_requires='>=3.12-alpha',
     tests_require=['pytest'],
     setup_requires=['pytest-runner'],
-    install_requires=['Cython', 'wheel'],
+    install_requires=[ 'wheel'],
 )
