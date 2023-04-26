@@ -1,6 +1,7 @@
 import os
 import pickle
 import threading
+import time
 import sys
 from functools import wraps
 
@@ -18,8 +19,193 @@ _atomic_byte_lock = guard_internal_use(atomic_byte_lock)
 
 del remote_memory, address_and_size, atomic_byte_lock
 
+
+
+class RemoteHeader(StructBase):
+    lock = Field(1)
+    refcount = Field(3)
+    last_owner = Field(4)
+
+TIME_RESOLUTION = 0.002
+REMOTE_HEADER_SIZE = RemoteHeader._size
+
+class RemoteArrayState:
+    parent = 0
+    child_not_ready = 1
+    child_ready = 2
+
+
+class _CrossInterpreterStructLock:
+    def __init__(self, struct, timeout=None):
+        buffer_ptr, size = _address_and_size(struct._data)#, struct._offset)
+        #struct_ptr = buffer_ptr + struct._offset
+        lock_offset = struct._offset + struct._get_offset_for_field("lock")
+        if lock_offset >= size:
+            raise ValueError("Lock address out of bounds for struct buffer")
+        self._lock_address = buffer_ptr + lock_offset
+        self._original_timeout = self._timeout = None
+        self._entered = False
+
+    def timeout(self, timeout: None | float):
+        """One use only timeout, for the same lock
+
+        with lock.timeout(0.5):
+           ...
+        """
+        self._timeout = timeout
+        return self
+
+    def __enter__(self):
+        # no check to "self._entered": acquiring the
+        # lock byte field will fail if that is the case.
+        if self._timeout is None:
+            if not _atomic_byte_lock(self._lock_address):
+                raise RuntimeError("Couldn't acquire lock")
+        else:
+            threshold = time.time() + self._timeout
+            while time.time() <= threshold:
+                if _atomic_byte_lock(self._lock_address):
+                    break
+            else:
+                raise RuntimeError("Timeout on trying to acquire lock")
+        self._entered = True
+        return self
+
+    def __exit__(self, *args):
+        if not self._entered:
+            return
+        buffer = _remote_memory(self._lock_address, 1)
+        buffer[0] = 0
+        del buffer
+        self._entered = False
+        self._timeout = self._original_timeout
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_entered"] = False
+
+
+@MutableSequence.register
+class RemoteArray:
+    """[EARLY WIP]
+    Single class which can hold shared buffers across interpreters.
+
+    It is used in the internal mechanisms of extrainterpreters, but offers
+    enough safeguards to be used in user code - upon being sending to a
+    remote interpreter, data can be shared through this structure in a safe way.
+
+    (It can be sent to the sub-interpreter through a Queue, or by unpckling it
+    in a "run_string" call)
+
+    It offers both byte-access with item-setting (Use sliced notation to
+    write a lot of data at once) and a file-like interface, mainly for providing
+    pickle compatibility.
+
+    """
+    __slots__ = ("_cursor", "_lock", "_data", "_state", "_size", "_anchor")
+
+    def __init__(self, *, size=None):
+        self._size = size
+        self._data = bytearray(b"\x00" * (size + REMOTE_HEADER_SIZE))
+        # Keeping reference to a "normal" memoryview, so that ._data
+        # can't be resized (and worse: repositioned) by the interpreter.
+        # trying to do so will raise a BufferError
+        self._anchor = memoryview(self._data)
+        self._cursor = 0
+        self._lock = threading.RLock()
+        self._state = RemoteArrayState.parent
+
+    @property
+    def header(self):
+        return RemoteHeader._from_data(self._data, 0)
+
+    def _convert_index(self, index):
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self._size)
+            index = slice(start + REMOTE_HEADER_SIZE, stop + REMOTE_HEADER_SIZE, step)
+        else:
+            index += REMOTE_HEADER_SIZE
+        return index
+
+    def __getitem__(self, index):
+        return self._data.__getitem__(self._convert_index(index))
+
+    def __setitem__(self, index, value):
+        # TBD: Maybe require lock?
+        # An option is to fail if unable to get the lock, and
+        # provide a timeouted method that will wait for it.
+        # (going for that):
+        with self._lock:
+            return self._data.__setitem__(self._convert_index(index), value)
+        raise RuntimeError("Remote Array busy in other thread")
+
+    def __delitem__(self, index):
+        raise NotImplementedError()
+
+    def __len__(self):
+        return self._size
+
+    def iter(self):
+        return iter(data)
+
+    def read(self, n=None):
+        with self._lock:
+            if n is None:
+                n = len(self) - self._cursor
+            prev = self._cursor
+            self._cursor += n
+            return self[prev: self._cursor]
+
+    def write(self, content):
+        with self._lock:
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            self[self._cursor: self._cursor + len(content)] = content
+            self._cursor += len(content)
+
+    def tell(self):
+        return self._cursor
+
+    def readline(self):
+        # needed by pickle.load
+        result = []
+        read = 0
+        with self._lock:
+            cursor = self._cursor
+            while read != 0x0a:
+                if cursor >= len(self):
+                    break
+                result.append(read:=self[cursor])
+                cursor += 1
+            self._cursor = self.cursor
+        return bytes(result)
+
+    def seek(self, pos):
+        self._cursor = pos
+
+    def _data_for_remote(self):
+        return _address_and_size(self._data)
+
+    def __getstate__(self):
+        ns = {"buffer_data": self._data_for_remote()}
+        return ns
+
+    @guard_internal_use
+    def __setstate__(self, state):
+        data = _remote_memory(*state["buffer_data"])
+        self._lock = threading.RLock()
+        self._data = data
+        self._cursor = 0
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__} with {len(self)} bytes>"
+
+
 @MutableSequence.register
 class FileLikeArray:
+    """DEPRECATED: to be replaced with 'RemoteArray' everywhere
+    as soon as it is ready
+    """
     __slots__ = ("_cursor", "_lock", "data")
 
     def __init__(self, data):

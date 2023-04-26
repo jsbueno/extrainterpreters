@@ -21,11 +21,11 @@ BFSZ = 10_000_000
 
 running_interpreters = weakref.WeakSet()
 
-from .memoryboard import ProcessBuffer
+from .memoryboard import ProcessBuffer, RemoteArray
 from .base_interpreter import BaseInterpreter
 from .queue import Pipe, SingleQueue
 from .simple_interpreter import SimpleInterpreter as Interpreter
-from .piped_interpreter import PipedInterpreter
+
 
 
 def list_all():

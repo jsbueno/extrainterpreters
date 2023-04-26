@@ -112,6 +112,15 @@ class StructBase:
         self._data = self._data[self._offset: self._offset + self._size]
         self._offset = 0
 
+    def _get_offset_for_field(self, field_name):
+        offset = 0
+        cls = self.__class__
+        for name in self._fields:
+            if name == field_name:
+                return offset
+            offset += getattr(cls, name).size
+        raise AttributeError("No field named {field_name!r} in provided struct")
+
     def __repr__(self):
         field_data = []
         for field_name in self._fields:
