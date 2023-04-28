@@ -9,22 +9,27 @@ from collections.abc import MutableSequence
 
 from . import interpreters
 from . import _memoryboard
-from .utils import guard_internal_use, Field, StructBase
+from .utils import guard_internal_use, Field, StructBase, _InstMode
 
-from ._memoryboard import remote_memory, address_and_size, atomic_byte_lock
+from ._memoryboard import _remote_memory, _address_and_size, _atomic_byte_lock
 
-_remote_memory = guard_internal_use(remote_memory)
-_address_and_size = guard_internal_use(address_and_size)
-_atomic_byte_lock = guard_internal_use(atomic_byte_lock)
+_remote_memory = guard_internal_use(_remote_memory)
+_address_and_size = guard_internal_use(_address_and_size)
+_atomic_byte_lock = guard_internal_use(_atomic_byte_lock)
 
-del remote_memory, address_and_size, atomic_byte_lock
+# del remote_memory, address_and_size, atomic_byte_lock
 
-
+class RemoteState:
+    building = 0
+    ready_to_transmit = 1
+    received = 2
+    garbage = 3
 
 class RemoteHeader(StructBase):
     lock = Field(1)
-    refcount = Field(3)
-    last_owner = Field(4)
+    state = Field(1)
+    enter_count = Field(3)
+    exit_count = Field(3)
 
 TIME_RESOLUTION = 0.002
 REMOTE_HEADER_SIZE = RemoteHeader._size
@@ -83,6 +88,7 @@ class _CrossInterpreterStructLock:
     def __getstate__(self):
         state = self.__dict__.copy()
         state["_entered"] = False
+        return state
 
 
 @MutableSequence.register
@@ -102,7 +108,65 @@ class RemoteArray:
     pickle compatibility.
 
     """
-    __slots__ = ("_cursor", "_lock", "_data", "_state", "_size", "_anchor")
+
+    """
+    Life cycle semantics:
+        - creation: set header state to "building"
+        - on first serialize (__getstate__), set a "serialized" state:
+            - can no longer be deleted, unless further criteia are met
+            - mark timestamp on buffer - this is checked against TTL
+            - on de-serialize: do nothing
+            - on client-side "__del__" without enter:
+                - increase cancel in buffer canceled counter (?)
+            - on client-side "__enter__":
+                - check TTL against serialization timestamp - on fail, Raise
+                - increment "entered" counter on buffer
+            - on client-side "__exit__":
+                - increment "exited" counter on buffer
+        - on parent side "exit":
+            - check serialization:
+                if no serialization ocurred, just destroy buffer.
+            - check enter and exit on buffer counters:
+                if failed,  (more enter than exit) save to "pending deletion"
+            - check TTL against timestamp of serialization:
+                if TTL not reached, save to "pending deletion"
+        - on parent side "__del__":
+            - call __exit__
+
+        - suggested default TTL: 3 seconds
+
+        - check for the possibility of a GC hook (gc.callbacks list)
+            - if possible, iterate all "pending deletion" and check conditions in "__exit__"
+            - if no GC hook possible,think of another reasonable mechanism to periodically try to delete pending deletion buffers. (dedicate thread with one check per second? Less frequent?
+
+        - extra semantic - buffer type:
+            - "main buffer" shared with a single interpreter
+                - on unpickle, mark client interpreter on buffer
+                - only destroy once interpreter is destroyed
+            - shared with multiple interpreters:
+                -use semantics above - TL;DR: ultimately TTL and _exit_ counters
+                    determine if a buffer can be disposed.
+    """
+    """
+        Other route for deleting semantics:
+            - Always depend on external notification of "ok" for deletion
+                (maybe a call to `__exit__`).
+            - Controled user classes:
+                - 1. a driver to an Interpreter which will only allow deletion
+                when the interpretr is shut down
+                - 2. a Queue which will allow deletion when notified of the memory buffer closure by its built-in return Pipe
+            - Pair that with "reference counting" for open clients ("__enter__" on child increment a value on header)
+            - keep the idea of a "to_delete" registry, scanned regularly, driven by GC callbacks.
+            - keep the "sent to child" above, but flag is set by controled class, not by "__setstate__"
+
+
+
+        - these simpler semantics ditch the TTL thing.
+
+        - this is simpler, more maintainable, but has less control and users could shoot themselves in the foot easier.
+    """
+    __slots__ = ("_cursor", "_lock", "_data", "_state", "_size", "_anchor", "_mode")
+
 
     def __init__(self, *, size=None):
         self._size = size
@@ -112,8 +176,9 @@ class RemoteArray:
         # trying to do so will raise a BufferError
         self._anchor = memoryview(self._data)
         self._cursor = 0
-        self._lock = threading.RLock()
+        self._lock = _CrossInterpreterStructLock(self.header)
         self._state = RemoteArrayState.parent
+        self._mode = _InstMode.parent
 
     @property
     def header(self):
@@ -193,13 +258,25 @@ class RemoteArray:
     @guard_internal_use
     def __setstate__(self, state):
         data = _remote_memory(*state["buffer_data"])
-        self._lock = threading.RLock()
+        self._lock = state["_lock"]
         self._data = data
         self._cursor = 0
 
     def __repr__(self):
         return f"<{self.__class__.__name__} with {len(self)} bytes>"
 
+    def close(self):
+        if self._mode == _InstMode.child:
+            ...
+            with self._lock:
+                self.header.exit_count += 1
+
+            del self._data
+    def __del__(self):
+        if self._mode == _InstMode.parent:
+            ...
+        else:
+            self.close()
 
 @MutableSequence.register
 class FileLikeArray:

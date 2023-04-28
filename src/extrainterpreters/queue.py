@@ -8,7 +8,7 @@ from textwrap import dedent as D
 
 import queue as threading_queue
 
-from .utils import guard_internal_use, StructBase, Field
+from .utils import guard_internal_use, StructBase, Field, _InstMode
 
 
 class Pipe:
@@ -111,14 +111,10 @@ class Pipe:
         self.close()
 
 
-_queue_parent = "parent"
-_queue_child = "child"
-
-
 def _parent_only(func):
     @wraps(func)
     def wrapper(self, *args, **kw):
-        if self.mode != _queue_parent:
+        if self.mode != _InstMode.parent:
             raise RuntimeError(f"Invalid queue state: {func.__name__} can only be called on parent interpreter")
         return func(self, *args, **kw)
     return wrapper
@@ -126,7 +122,7 @@ def _parent_only(func):
 def _child_only(func):
     @wraps(func)
     def wrapper(self, *args, **kw):
-        if self.mode != _queue_child:
+        if self.mode != _InstMode.child:
             raise RuntimeError(f"Invalid queue state: {func.__name__} can only be called on child interpreter")
         return func(self, *args, **kw)
     return wrapper
@@ -142,13 +138,13 @@ class SingleQueue:
     a sub-interpreter, the instance will assume the "child side" state  -
     appropriate methods should only be used in each side. (basically: put on parent, get on child)
     """
-    mode = _queue_parent
+    mode = _InstMode.parent
     @_parent_only
     def __init__(self, maxsize=0):
         from . import interpreters
         self.maxsize = maxsize
         self.pipe = Pipe()
-        self.mode = _queue_parent
+        self.mode = _InstMode.parent
         self.bound_to_interp = int(interpreters.get_current())
         self._size = 0
         self._post_init_parent()
@@ -170,7 +166,7 @@ class SingleQueue:
         if self.pipe._bound_interp == interpreters.get_current():
             self._post_init_parent()
         else:
-            self.mode = _queue_child
+            self.mode = _InstMode.child
 
     @property
     def size(self):

@@ -1,6 +1,10 @@
 import sys
 from functools import wraps
 
+class _InstMode:
+    parent = "parent"
+    child = "child"
+
 def guard_internal_use(func):
     @wraps(func)
     def wrapper(*args, **kwargs):

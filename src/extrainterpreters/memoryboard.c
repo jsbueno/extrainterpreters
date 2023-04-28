@@ -91,9 +91,9 @@ static PyObject *_atomic_byte_loc(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef _memoryboard_methods[] = {
-    {"remote_memory", _memoryboard_remote_memory, METH_VARARGS, _memoryboard_remote_memory_doc},
-    {"address_and_size", _memoryboard_get_address_and_size, METH_VARARGS, _memoryboard_get_address_and_size_doc},
-    {"atomic_byte_lock", _atomic_byte_loc, METH_VARARGS, _atomic_byte_loc_doc},
+    {"_remote_memory", _memoryboard_remote_memory, METH_VARARGS, _memoryboard_remote_memory_doc},
+    {"_address_and_size", _memoryboard_get_address_and_size, METH_VARARGS, _memoryboard_get_address_and_size_doc},
+    {"_atomic_byte_lock", _atomic_byte_loc, METH_VARARGS, _atomic_byte_loc_doc},
     {NULL, NULL, 0, NULL}
 };
 
