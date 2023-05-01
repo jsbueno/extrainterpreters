@@ -1,3 +1,4 @@
+import struct
 import sys
 from functools import wraps
 
@@ -17,7 +18,6 @@ def guard_internal_use(func):
     return wrapper
 
 
-
 class clsproperty:
     def __init__(self, method):
         self.method = method
@@ -32,14 +32,14 @@ class clsproperty:
         return f"clsproperty <{self.name}>"
 
 
-class Field:
+class RawField:
     def __init__(self, bytesize):
         self.size = bytesize
 
     def _calc_offset(self, owner):
         offset = 0
         for name, obj in owner.__dict__.items():
-            if not isinstance(obj, Field):
+            if not isinstance(obj, RawField):
                 continue
             if obj is self:
                 return offset
@@ -53,12 +53,38 @@ class Field:
         if instance is None:
             return self
         off = instance._offset + self.offset
-        return int.from_bytes(instance._data[off: off + self.size], "little")
+        return instance._data[off: off + self.size]
 
     def __set__(self, instance, value):
         off = instance._offset + self.offset
-        instance._data[off: off + self.size] = value.to_bytes(self.size, "little")
+        instance._data[off: off + self.size] = value
 
+
+class Field(RawField):  # int field
+    def __get__(self, instance, owner):
+        value = super().__get__(instance, owner)
+        if not isinstance(value, (bytes, bytearray)):
+            return value
+        return int.from_bytes(value, "little")
+
+    def __set__(self, instance, value):
+        value = value.to_bytes(self.size, "little")
+        super().__set__(instance, value)
+
+
+class DoubleField(RawField):
+    def __init__(self):
+        super().__init__(8)
+
+    def __get__(self, instance, owner):
+        value = super().__get__(instance, owner)
+        if not isinstance(value, (bytes, bytearray)):
+            return value
+        return struct.unpack("d", value,)[0]
+
+    def __set__(self, instance, value):
+        value = struct.pack("d", value)
+        super().__set__(instance, value)
 
 class StructBase:
     """A Struct type class which can attach to offsets in an existing memory buffer
@@ -89,7 +115,7 @@ class StructBase:
     @clsproperty
     def _fields(cls):
         for k, v in cls.__dict__.items():
-            if isinstance(v, Field):
+            if isinstance(v, RawField):
                 yield k
 
     @classmethod
@@ -108,7 +134,7 @@ class StructBase:
     def _size(cls):
         size = 0
         for name, obj in cls.__dict__.items():
-            if isinstance(obj, Field):
+            if isinstance(obj, RawField):
                 size += obj.size
         return size
 
@@ -116,14 +142,10 @@ class StructBase:
         self._data = self._data[self._offset: self._offset + self._size]
         self._offset = 0
 
-    def _get_offset_for_field(self, field_name):
-        offset = 0
-        cls = self.__class__
-        for name in self._fields:
-            if name == field_name:
-                return offset
-            offset += getattr(cls, name).size
-        raise AttributeError("No field named {field_name!r} in provided struct")
+    @classmethod
+    def _get_offset_for_field(cls, field_name):
+        field = getattr(cls, field_name)
+        return field._calc_offset(cls)
 
     def __repr__(self):
         field_data = []

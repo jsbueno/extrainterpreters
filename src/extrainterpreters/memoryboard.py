@@ -17,7 +17,6 @@ _remote_memory = guard_internal_use(_remote_memory)
 _address_and_size = guard_internal_use(_address_and_size)
 _atomic_byte_lock = guard_internal_use(_atomic_byte_lock)
 
-# del remote_memory, address_and_size, atomic_byte_lock
 
 class RemoteState:
     building = 0
@@ -38,6 +37,16 @@ class RemoteArrayState:
     parent = 0
     child_not_ready = 1
     child_ready = 2
+
+class DeleteSemantics:
+    # buffer can't die while target interpreter is running:
+    follow_interpreter = "follow"
+    # buffer can be per-used, and its usage is comunicated back
+    # by a side-channel:
+    communicated = "communicated"
+    # buffer has a fixed time-to-live, after which
+    # it can be deleted if it was not entered in another interpreter
+    ttl = "ttl"
 
 
 class _CrossInterpreterStructLock:
@@ -159,13 +168,11 @@ class RemoteArray:
             - keep the idea of a "to_delete" registry, scanned regularly, driven by GC callbacks.
             - keep the "sent to child" above, but flag is set by controled class, not by "__setstate__"
 
-
-
         - these simpler semantics ditch the TTL thing.
 
         - this is simpler, more maintainable, but has less control and users could shoot themselves in the foot easier.
     """
-    __slots__ = ("_cursor", "_lock", "_data", "_state", "_size", "_anchor", "_mode")
+    __slots__ = ("_cursor", "_lock", "_data", "_state", "_size", "_anchor", "_mode", "_delete_semantics", "_ttl")
 
 
     def __init__(self, *, size=None):

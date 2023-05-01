@@ -1,4 +1,4 @@
-from extrainterpreters.utils import StructBase, Field
+from extrainterpreters.utils import StructBase, Field, DoubleField
 
 import pytest
 
@@ -64,7 +64,6 @@ def test_struct_from_values():
     assert s.length == 2_000_000
 
 
-
 def test_struct_bytes():
     class Struct(StructBase):
         data_offset = Field(2)
@@ -72,3 +71,11 @@ def test_struct_bytes():
     s = Struct._from_data(bytearray(b"ZZ"))
 
     assert s._bytes == b"ZZ"
+
+
+def test_struct_doublefield():
+    class Struct(StructBase):
+        value = DoubleField()
+    s = Struct(value=1.25)
+    assert s._data == bytearray(b'\x00\x00\x00\x00\x00\x00\xf4?')
+    assert s.value == 1.25
