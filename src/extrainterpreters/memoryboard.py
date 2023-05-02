@@ -9,7 +9,7 @@ from collections.abc import MutableSequence
 
 from . import interpreters
 from . import _memoryboard
-from .utils import guard_internal_use, Field, StructBase, _InstMode
+from .utils import guard_internal_use, Field, DoubleField, StructBase, _InstMode
 
 from ._memoryboard import _remote_memory, _address_and_size, _atomic_byte_lock
 
@@ -20,9 +20,11 @@ _atomic_byte_lock = guard_internal_use(_atomic_byte_lock)
 
 class RemoteState:
     building = 0
-    ready_to_transmit = 1
+    ready = 1
+    serialized = 2
     received = 2
     garbage = 3
+
 
 class RemoteHeader(StructBase):
     lock = Field(1)
@@ -30,23 +32,14 @@ class RemoteHeader(StructBase):
     enter_count = Field(3)
     exit_count = Field(3)
 
+class RemoteDataState:
+    not_ready = 0
+    read_only = 1  # not used for now.
+    read_write = 2
+
 TIME_RESOLUTION = 0.002
+DEFAULT_TTL = 1
 REMOTE_HEADER_SIZE = RemoteHeader._size
-
-class RemoteArrayState:
-    parent = 0
-    child_not_ready = 1
-    child_ready = 2
-
-class DeleteSemantics:
-    # buffer can't die while target interpreter is running:
-    follow_interpreter = "follow"
-    # buffer can be per-used, and its usage is comunicated back
-    # by a side-channel:
-    communicated = "communicated"
-    # buffer has a fixed time-to-live, after which
-    # it can be deleted if it was not entered in another interpreter
-    ttl = "ttl"
 
 
 class _CrossInterpreterStructLock:
@@ -99,10 +92,41 @@ class _CrossInterpreterStructLock:
         state["_entered"] = False
         return state
 
+# when a RemoteArray can't be destroyed in parent,
+# it comes to "sleep" here, where a callback in the
+# GC will periodically try to remove it:
+_array_registry = []
+
+_collecting_generation = 1
+
+def _collector(action, data):
+    """Garbage Collector "plug-in":
+
+    when a RemoteBuffer is closed in parent interpreter
+    earlier than it is exist in sub-interpreters,
+    it is decomissioned and put in "_array_registry".
+
+    This function will be called when the garbage collector
+    is run, and check if any pending buffers can be fully
+    dealocated.
+    """
+    if action != "start" or data.get("generation", 0) < _collecting_generation:
+        return
+    if not _array_registry:
+        return
+    new_registry = []
+    for buffer in _array_registry:
+        buffer.close()
+        if buffer._data is not None:
+            new_registry.append(buffer)
+    _array_registry[:] = new_registry
+
+import gc
+gc.callbacks.append(_collector)
 
 @MutableSequence.register
 class RemoteArray:
-    """[EARLY WIP]
+    """[WIP]
     Single class which can hold shared buffers across interpreters.
 
     It is used in the internal mechanisms of extrainterpreters, but offers
@@ -122,13 +146,13 @@ class RemoteArray:
     Life cycle semantics:
         - creation: set header state to "building"
         - on first serialize (__getstate__), set a "serialized" state:
-            - can no longer be deleted, unless further criteia are met
+            - can no longer be deleted, unless further criteria are met
             - mark timestamp on buffer - this is checked against TTL
             - on de-serialize: do nothing
             - on client-side "__del__" without enter:
                 - increase cancel in buffer canceled counter (?)
             - on client-side "__enter__":
-                - check TTL against serialization timestamp - on fail, Raise
+                - check TTL against serialization timestamp - on fail, raise
                 - increment "entered" counter on buffer
             - on client-side "__exit__":
                 - increment "exited" counter on buffer
@@ -136,46 +160,23 @@ class RemoteArray:
             - check serialization:
                 if no serialization ocurred, just destroy buffer.
             - check enter and exit on buffer counters:
-                if failed,  (more enter than exit) save to "pending deletion"
+                if failed,  (more enters than exits) save to "pending deletion"
             - check TTL against timestamp of serialization:
                 if TTL not reached, save to "pending deletion"
         - on parent side "__del__":
             - call __exit__
 
-        - suggested default TTL: 3 seconds
+        - suggested default TTL: 1 seconds
 
         - check for the possibility of a GC hook (gc.callbacks list)
             - if possible, iterate all "pending deletion" and check conditions in "__exit__"
             - if no GC hook possible,think of another reasonable mechanism to periodically try to delete pending deletion buffers. (dedicate thread with one check per second? Less frequent?
 
-        - extra semantic - buffer type:
-            - "main buffer" shared with a single interpreter
-                - on unpickle, mark client interpreter on buffer
-                - only destroy once interpreter is destroyed
-            - shared with multiple interpreters:
-                -use semantics above - TL;DR: ultimately TTL and _exit_ counters
-                    determine if a buffer can be disposed.
     """
-    """
-        Other route for deleting semantics:
-            - Always depend on external notification of "ok" for deletion
-                (maybe a call to `__exit__`).
-            - Controled user classes:
-                - 1. a driver to an Interpreter which will only allow deletion
-                when the interpretr is shut down
-                - 2. a Queue which will allow deletion when notified of the memory buffer closure by its built-in return Pipe
-            - Pair that with "reference counting" for open clients ("__enter__" on child increment a value on header)
-            - keep the idea of a "to_delete" registry, scanned regularly, driven by GC callbacks.
-            - keep the "sent to child" above, but flag is set by controled class, not by "__setstate__"
-
-        - these simpler semantics ditch the TTL thing.
-
-        - this is simpler, more maintainable, but has less control and users could shoot themselves in the foot easier.
-    """
-    __slots__ = ("_cursor", "_lock", "_data", "_state", "_size", "_anchor", "_mode", "_delete_semantics", "_ttl")
+    __slots__ = ("_cursor", "_lock", "_data", "_data_state", "_size", "_anchor", "_mode", "_timestamp", "_ttl", "_internal")
 
 
-    def __init__(self, *, size=None):
+    def __init__(self, *, size=None, ttl=DEFAULT_TTL):
         self._size = size
         self._data = bytearray(b"\x00" * (size + REMOTE_HEADER_SIZE))
         # Keeping reference to a "normal" memoryview, so that ._data
@@ -184,11 +185,15 @@ class RemoteArray:
         self._anchor = memoryview(self._data)
         self._cursor = 0
         self._lock = _CrossInterpreterStructLock(self.header)
-        self._state = RemoteArrayState.parent
+        self._data_state = RemoteDataState.read_write
         self._mode = _InstMode.parent
+        self._ttl = ttl
+        self.header.state = RemoteState.building
 
     @property
     def header(self):
+        if self._data_state == RemoteDataState.not_ready:
+            raise RuntimeError("Trying to use buffer metadata not ready for use.")
         return RemoteHeader._from_data(self._data, 0)
 
     def _convert_index(self, index):
@@ -200,6 +205,8 @@ class RemoteArray:
         return index
 
     def __getitem__(self, index):
+        if not self._data_state in (RemoteDataState.read_only, RemoteDataState.read_write):
+            raise RuntimeError("Trying to read data from buffer that is not ready for use")
         return self._data.__getitem__(self._convert_index(index))
 
     def __setitem__(self, index, value):
@@ -207,9 +214,42 @@ class RemoteArray:
         # An option is to fail if unable to get the lock, and
         # provide a timeouted method that will wait for it.
         # (going for that):
+        if self._data_state != RemoteDataState.read_write:
+            raise RuntimeError("Trying to write data to buffer that is not ready for use")
         with self._lock:
             return self._data.__setitem__(self._convert_index(index), value)
         raise RuntimeError("Remote Array busy in other thread")
+
+    def _enter_child(self):
+        ttl = self._check_ttl()
+        if not ttl:
+            raise RuntimeError(f"TTL Exceeded trying to use buffer in sub-interpreter {interpreters.get_current()}")
+        self._data = _remote_memory(*self._internal[:2])
+        self._lock = self._internal[2]
+        self._cursor = 0
+        with self._lock.timeout(TIME_RESOLUTION * 50):
+            # Avoid race conditions: better re-test the TTL
+            ttl = self._check_ttl()
+            if not ttl:
+                del self._data
+                raise RuntimeError(f"TTL Exceeded trying to use buffer in sub-interpreter {interpreters.get_current()}, (stage 2)")
+            if (state:=self.header.state) not in (RemoteState.serialized, RemoteState.received):
+                del self._data
+                raise RuntimeError(f"Invalid state in buffer: {state}")
+            self.header.enter_count += 1
+        self._data_state = RemoteDataState.read_write
+        return self
+
+    def _enter_parent(self):
+        if self.header.state != RemoteState.building:
+            raise RuntimeError("Cannot enter buffer: invalid state")
+        self.header.state = RemoteState.ready
+        return self
+
+    def __enter__(self):
+        if self._mode == _InstMode.zombie:
+            raise RuntimeError("This buffer is decomissioned and no longer can be used for data exchange")
+        return self._enter_child() if self.mode == _InstMode.child else self._enter_parent()
 
     def __delitem__(self, index):
         raise NotImplementedError()
@@ -259,31 +299,89 @@ class RemoteArray:
         return _address_and_size(self._data)
 
     def __getstate__(self):
-        ns = {"buffer_data": self._data_for_remote()}
-        return ns
+        with self._lock:
+            if self.header.state not in (RemoteState.ready, RemoteState.serialized, RemoteState.received):
+                raise RuntimeError(f"Can not pickle remote buffer in current state (self.header.state)")
+        with self._lock:
+            if self.header.state == RemoteState.ready:
+                self.header.state = RemoteState.serialized
+        state = {"buffer_data": self._data_for_remote()}
+        state["ttl"] = self._ttl
+        if not hasattr(self, "_timestamp"):
+            self._timestamp = time.monotonic()
+        state["timestamp"] = self._timestamp
+        return state
 
     @guard_internal_use
     def __setstate__(self, state):
-        data = _remote_memory(*state["buffer_data"])
-        self._lock = state["_lock"]
-        self._data = data
+        self._internal = state["buffer_data"] + (state["_lock"],)
+        self._ttl = state["ttl"]
+        self._timestamp = state["timestamp"]
+        self._size = state["buffer_data"][1]
+        # atention: the Lock will use a byte in the buffer, with an independent allocation mechanism.
+        # It is unpickled an ready to use at this point - but we will
+        # just add it to the instance in __enter__ , after other checks
+        # take place.
+        self._lock = None  # state["_lock"]
+        self._data = None
         self._cursor = 0
+        self._mode = _InstMode.child
+        self._data_state = RemoteDataState.not_ready
 
     def __repr__(self):
         return f"<{self.__class__.__name__} with {len(self)} bytes>"
 
+    def _copy_to_limbo(self):
+        inst = type(self).__new__()
+        inst._anchor = self._anchor
+        inst._data = self.data
+        inst._mode = _InstMode.zombie
+        _array_registry.append(inst)
+
+    def _check_ttl(self):
+        """Returns True if parent copy can be deleted, ttl-wise
+
+            which means: no new interpreter will start using this
+            copy of the buffer.
+        """
+
+        return time.monotonic() - self._timestamp <= self._ttl
+
     def close(self):
+        self._data_state = RemoteDataState.not_ready
         if self._mode == _InstMode.child:
-            ...
             with self._lock:
                 self.header.exit_count += 1
-
             del self._data
+            return
+        # Parent closing - we have to take in account all the semantics
+        # for the 3 modes.
+        with self._lock:
+            early_stages = self.header.state in (RemoteState.building, RemoteState.ready)
+            ttl_cleared = not self._check_ttl()
+
+            if early_stages or (ttl_cleared and self.header.exit_count >= self.header.enter_count):
+                self.header.state = RemoteState.garbage
+
+        if self.header.state == RemoteState.garbage:
+            del self._anchor
+            self._data = None
+            return
+        if self._mode == _InstMode.zombie:
+            # do nothing on fail
+            return
+        self._copy_to_limbo()
+        del self._anchor
+        del self._data
+        del self._cursor
+        # This instance is now a floating "casc" which can no longer access
+        # data. GC "plugin" will keep trying to delete it.
+
+    def __exit__(self, *args):
+        return self.close()
+
     def __del__(self):
-        if self._mode == _InstMode.parent:
-            ...
-        else:
-            self.close()
+        self.close()
 
 @MutableSequence.register
 class FileLikeArray:

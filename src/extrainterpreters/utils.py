@@ -5,6 +5,7 @@ from functools import wraps
 class _InstMode:
     parent = "parent"
     child = "child"
+    zombie = "zombie"
 
 def guard_internal_use(func):
     @wraps(func)
