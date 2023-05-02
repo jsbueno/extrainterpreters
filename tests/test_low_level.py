@@ -61,4 +61,23 @@ def test_atomiclock_works_only_when_indicator_at_0(lowlevel):
     assert not memoryboard._atomic_byte_lock(address)
 
 
+def test_atomiclock_locks(lowlevel):
+    import time, random, threading
+    buffer= bytearray([0,])
+    address, _ = memoryboard._address_and_size(buffer)
+    counter = 0
+    def increment():
+        nonlocal counter
+        while not memoryboard._atomic_byte_lock(address):
+            time.sleep(0.00005)
+        old_counter = counter
+        time.sleep(random.random() % 0.02)
+        counter = old_counter + 1
+        buffer[0] = 0
+    threads = [threading.Thread(target=increment) for i in range(20)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert counter == 20
+
+
 

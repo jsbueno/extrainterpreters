@@ -38,20 +38,21 @@ class RemoteDataState:
     read_write = 2
 
 TIME_RESOLUTION = 0.002
+DEFAULT_TIMEOUT = 50 * TIME_RESOLUTION
 DEFAULT_TTL = 1
 REMOTE_HEADER_SIZE = RemoteHeader._size
 
 
 class _CrossInterpreterStructLock:
-    def __init__(self, struct, timeout=None):
+    def __init__(self, struct, timeout=DEFAULT_TIMEOUT):
         buffer_ptr, size = _address_and_size(struct._data)#, struct._offset)
         #struct_ptr = buffer_ptr + struct._offset
         lock_offset = struct._offset + struct._get_offset_for_field("lock")
         if lock_offset >= size:
             raise ValueError("Lock address out of bounds for struct buffer")
         self._lock_address = buffer_ptr + lock_offset
-        self._original_timeout = self._timeout = None
-        self._entered = False
+        self._original_timeout = self._timeout = timeout
+        self._entered = 0
 
     def timeout(self, timeout: None | float):
         """One use only timeout, for the same lock
@@ -63,8 +64,9 @@ class _CrossInterpreterStructLock:
         return self
 
     def __enter__(self):
-        # no check to "self._entered": acquiring the
-        # lock byte field will fail if that is the case.
+        if self._entered:
+            self._entered += 1
+            return self
         if self._timeout is None:
             if not _atomic_byte_lock(self._lock_address):
                 raise RuntimeError("Couldn't acquire lock")
@@ -75,11 +77,14 @@ class _CrossInterpreterStructLock:
                     break
             else:
                 raise RuntimeError("Timeout on trying to acquire lock")
-        self._entered = True
+        self._entered += 1
         return self
 
     def __exit__(self, *args):
         if not self._entered:
+            return
+        self._entered -= 1
+        if self._entered:
             return
         buffer = _remote_memory(self._lock_address, 1)
         buffer[0] = 0
@@ -227,7 +232,7 @@ class RemoteArray:
         self._data = _remote_memory(*self._internal[:2])
         self._lock = self._internal[2]
         self._cursor = 0
-        with self._lock.timeout(TIME_RESOLUTION * 50):
+        with self._lock:
             # Avoid race conditions: better re-test the TTL
             ttl = self._check_ttl()
             if not ttl:
@@ -345,10 +350,7 @@ class RemoteArray:
         _array_registry.append(inst)
 
     def _check_ttl(self):
-        """Returns True if parent copy can be deleted, ttl-wise
-
-            which means: no new interpreter will start using this
-            copy of the buffer.
+        """Returns True if time-to-live has not expired
         """
 
         return time.monotonic() - self._timestamp <= self._ttl
