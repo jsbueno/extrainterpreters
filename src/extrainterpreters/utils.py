@@ -64,7 +64,7 @@ class RawField:
 class Field(RawField):  # int field
     def __get__(self, instance, owner):
         value = super().__get__(instance, owner)
-        if not isinstance(value, (bytes, bytearray)):
+        if not isinstance(value, (bytes, bytearray, memoryview)):
             return value
         return int.from_bytes(value, "little")
 

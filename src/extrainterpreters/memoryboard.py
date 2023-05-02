@@ -184,8 +184,8 @@ class RemoteArray:
         # trying to do so will raise a BufferError
         self._anchor = memoryview(self._data)
         self._cursor = 0
-        self._lock = _CrossInterpreterStructLock(self.header)
         self._data_state = RemoteDataState.read_write
+        self._lock = _CrossInterpreterStructLock(self.header)
         self._mode = _InstMode.parent
         self._ttl = ttl
         self.header.state = RemoteState.building
@@ -233,11 +233,11 @@ class RemoteArray:
             if not ttl:
                 del self._data
                 raise RuntimeError(f"TTL Exceeded trying to use buffer in sub-interpreter {interpreters.get_current()}, (stage 2)")
+            self._data_state = RemoteDataState.read_write
             if (state:=self.header.state) not in (RemoteState.serialized, RemoteState.received):
                 del self._data
                 raise RuntimeError(f"Invalid state in buffer: {state}")
             self.header.enter_count += 1
-        self._data_state = RemoteDataState.read_write
         return self
 
     def _enter_parent(self):
@@ -249,7 +249,7 @@ class RemoteArray:
     def __enter__(self):
         if self._mode == _InstMode.zombie:
             raise RuntimeError("This buffer is decomissioned and no longer can be used for data exchange")
-        return self._enter_child() if self.mode == _InstMode.child else self._enter_parent()
+        return self._enter_child() if self._mode == _InstMode.child else self._enter_parent()
 
     def __delitem__(self, index):
         raise NotImplementedError()
@@ -310,6 +310,7 @@ class RemoteArray:
         if not hasattr(self, "_timestamp"):
             self._timestamp = time.monotonic()
         state["timestamp"] = self._timestamp
+        state["_lock"] = self._lock
         return state
 
     @guard_internal_use
@@ -332,10 +333,15 @@ class RemoteArray:
         return f"<{self.__class__.__name__} with {len(self)} bytes>"
 
     def _copy_to_limbo(self):
-        inst = type(self).__new__()
+        inst = type(self).__new__(type(self))
         inst._anchor = self._anchor
-        inst._data = self.data
+        inst._data = self._data
         inst._mode = _InstMode.zombie
+        inst._size = self._size
+        inst._lock = self._lock
+        inst._data_state = self._data_state
+        inst._timestamp = self._timestamp
+        inst._ttl = self._ttl
         _array_registry.append(inst)
 
     def _check_ttl(self):
@@ -348,11 +354,13 @@ class RemoteArray:
         return time.monotonic() - self._timestamp <= self._ttl
 
     def close(self):
-        self._data_state = RemoteDataState.not_ready
         if self._mode == _InstMode.child:
+            if self._data is None:
+                return
             with self._lock:
                 self.header.exit_count += 1
-            del self._data
+            self._data_state = RemoteDataState.not_ready
+            self._data = None
             return
         # Parent closing - we have to take in account all the semantics
         # for the 3 modes.
@@ -364,6 +372,7 @@ class RemoteArray:
                 self.header.state = RemoteState.garbage
 
         if self.header.state == RemoteState.garbage:
+            self._data_state = RemoteDataState.not_ready
             del self._anchor
             self._data = None
             return
@@ -372,8 +381,9 @@ class RemoteArray:
             return
         self._copy_to_limbo()
         del self._anchor
-        del self._data
+        self._data = None
         del self._cursor
+        self._data_state = RemoteDataState.not_ready
         # This instance is now a floating "casc" which can no longer access
         # data. GC "plugin" will keep trying to delete it.
 
@@ -381,7 +391,8 @@ class RemoteArray:
         return self.close()
 
     def __del__(self):
-        self.close()
+        if self._data is not None:
+            self.close()
 
 @MutableSequence.register
 class FileLikeArray:
