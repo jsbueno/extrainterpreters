@@ -181,9 +181,14 @@ class RemoteArray:
     __slots__ = ("_cursor", "_lock", "_data", "_data_state", "_size", "_anchor", "_mode", "_timestamp", "_ttl", "_internal")
 
 
-    def __init__(self, *, size=None, ttl=DEFAULT_TTL):
+    def __init__(self, *, size=None, payload=None, ttl=DEFAULT_TTL):
+        if size is None and payload is not None:
+            size = len(payload)
         self._size = size
         self._data = bytearray(b"\x00" * (size + REMOTE_HEADER_SIZE))
+        if payload:
+            # TBD: Temporary thing - we are allowing zero-copy buffers soon
+            self._data[REMOTE_HEADER_SIZE:] = payload
         # Keeping reference to a "normal" memoryview, so that ._data
         # can't be resized (and worse: repositioned) by the interpreter.
         # trying to do so will raise a BufferError
@@ -236,11 +241,11 @@ class RemoteArray:
             # Avoid race conditions: better re-test the TTL
             ttl = self._check_ttl()
             if not ttl:
-                del self._data
+                self._data = None
                 raise RuntimeError(f"TTL Exceeded trying to use buffer in sub-interpreter {interpreters.get_current()}, (stage 2)")
             self._data_state = RemoteDataState.read_write
             if (state:=self.header.state) not in (RemoteState.serialized, RemoteState.received):
-                del self._data
+                self._data = None
                 raise RuntimeError(f"Invalid state in buffer: {state}")
             self.header.enter_count += 1
         return self
@@ -251,7 +256,7 @@ class RemoteArray:
         self.header.state = RemoteState.ready
         return self
 
-    def __enter__(self):
+    def start(self):
         if self._mode == _InstMode.zombie:
             raise RuntimeError("This buffer is decomissioned and no longer can be used for data exchange")
         return self._enter_child() if self._mode == _InstMode.child else self._enter_parent()
@@ -263,7 +268,7 @@ class RemoteArray:
         return self._size
 
     def iter(self):
-        return iter(data)
+        return iter(self.data)
 
     def read(self, n=None):
         with self._lock:
@@ -301,7 +306,13 @@ class RemoteArray:
         self._cursor = pos
 
     def _data_for_remote(self):
-        return _address_and_size(self._data)
+        # TBD: adjust when spliting payload buffer from header buffer
+        #return _address_and_size(self.data)
+        address, length = _address_and_size(self._data)
+        address += RemoteHeader._size
+        length -= RemoteHeader._size
+        return address, length
+
 
     def __getstate__(self):
         with self._lock:
@@ -310,7 +321,7 @@ class RemoteArray:
         with self._lock:
             if self.header.state == RemoteState.ready:
                 self.header.state = RemoteState.serialized
-        state = {"buffer_data": self._data_for_remote()}
+        state = {"buffer_data": _address_and_size(self._data)}
         state["ttl"] = self._ttl
         if not hasattr(self, "_timestamp"):
             self._timestamp = time.monotonic()
@@ -318,12 +329,11 @@ class RemoteArray:
         state["_lock"] = self._lock
         return state
 
-    @guard_internal_use
     def __setstate__(self, state):
         self._internal = state["buffer_data"] + (state["_lock"],)
         self._ttl = state["ttl"]
         self._timestamp = state["timestamp"]
-        self._size = state["buffer_data"][1]
+        self._size = state["buffer_data"][1] - RemoteHeader._size
         # atention: the Lock will use a byte in the buffer, with an independent allocation mechanism.
         # It is unpickled an ready to use at this point - but we will
         # just add it to the instance in __enter__ , after other checks
@@ -352,8 +362,9 @@ class RemoteArray:
     def _check_ttl(self):
         """Returns True if time-to-live has not expired
         """
-
-        return time.monotonic() - self._timestamp <= self._ttl
+        if not (timestamp:=getattr(self, "_timestamp", None)):
+            return True
+        return time.monotonic() - timestamp <= self._ttl
 
     def close(self):
         if self._mode == _InstMode.child:
@@ -368,9 +379,12 @@ class RemoteArray:
         # for the 3 modes.
         with self._lock:
             early_stages = self.header.state in (RemoteState.building, RemoteState.ready)
+            if early_stages:
+                self.header.state = RemoteState.garbage
+
             ttl_cleared = not self._check_ttl()
 
-            if early_stages or (ttl_cleared and self.header.exit_count >= self.header.enter_count):
+            if ttl_cleared and self.header.exit_count >= self.header.enter_count:
                 self.header.state = RemoteState.garbage
 
         if self.header.state == RemoteState.garbage:
@@ -392,94 +406,25 @@ class RemoteArray:
     def __exit__(self, *args):
         return self.close()
 
+    def __enter__(self):
+        return self.start()
+
     def __del__(self):
-        if self._data is not None:
+        if getattr(self, "_data", None) is not None:
             self.close()
 
-@MutableSequence.register
-class FileLikeArray:
-    """DEPRECATED: to be replaced with 'RemoteArray' everywhere
-    as soon as it is ready
-    """
-    __slots__ = ("_cursor", "_lock", "data")
-
-    def __init__(self, data):
-        self.data = data
-        self._cursor = 0
-        self._lock = threading.RLock()
-
-    def __getitem__(self, index):
-        return self.data.__getitem__(index)
-
-    def __setitem__(self, index, value):
-        return self.data.__setitem__(index, value)
-
-    def __delitem__(self, index):
-        raise NotImplementedError()
-
-    def __len__(self):
-        return len(self.data)
-
-    def iter(self):
-        return iter(data)
-
-    def read(self, n=None):
-        with self._lock:
-            if n is None:
-                n = len(self) - self._cursor
-            prev = self._cursor
-            self._cursor += n
-            return self.data[prev: self._cursor]
-
-    def write(self, content):
-        with self._lock:
-            if isinstance(content, str):
-                content = content.encode("utf-8")
-            self.data[self._cursor: self._cursor + len(content)] = content
-            self._cursor += len(content)
-
-    def tell(self):
-        return self._cursor
-
-    def readline(self):
-        # needed by pickle.load
-        result = []
-        read = 0
-        with self._lock:
-            cursor = self._cursor
-            while read != 0x0a:
-                if cursor >= len(self):
-                    break
-                result.append(read:=self.data[cursor])
-                cursor += 1
-            self._cursor = self.cursor
-        return bytes(result)
-
-    def seek(self, pos):
-        self._cursor = pos
-
-    def _data_for_remote(self):
-        return _address_and_size(self.data)
-
-    def __getstate__(self):
-        ns = {"buffer_data": self._data_for_remote()}
-        return ns
-
-    @guard_internal_use
-    def __setstate__(self, state):
-        data = _remote_memory(*state["buffer_data"])
-        self._lock = threading.RLock()
-        self.data = data
-        self._cursor = 0
-
-    def __repr__(self):
-        return f"<{self.__class__.__name__} with {len(self)} bytes>"
 
 class BufferBase:
-    map: FileLikeArray
+    map: RemoteArray
 
     def close(self):
-        self.map = None
+        if self.map:
+            self.map.close()
+            self.map = None
+
+    def __del__(self):
+        self.close()
+
 
 
 class ProcessBuffer(BufferBase):
@@ -495,7 +440,8 @@ class ProcessBuffer(BufferBase):
         self.ranges = ranges
         self.nranges = {v:k for k, v in ranges.items()}
         self._init_range_sizes()
-        self.map = FileLikeArray(bytearray(b"\x00" * size))
+        self.map = RemoteArray(size=size)
+        self.map.__enter__()
 
     def _init_range_sizes(self):
         prev_range = ""
@@ -539,8 +485,8 @@ class LockableBoardParent(BufferBase):
     maxblocks = 2048
     def __init__(self):
         self._size = self.maxblocks
-        data = bytearray(b"\x00" * self.maxblocks * BlockLock._size)
-        self.map = FileLikeArray(data)
+        self.map = RemoteArray(size=self.maxblocks * BlockLock._size)
+        self.map.start()
         #self.root = LockableBoardRoot.from_data(self.map, 0)
         #self.root.size = 0
         self.blocks = {}
@@ -554,6 +500,7 @@ class LockableBoardParent(BufferBase):
     def __setstate__(self, state):
         self.__class__ = LockableBoardChild
         self.__dict__.update(state)
+        self.map.start()
 
     def new_item(self, data):
         data = OwnableBuffer(pickle.dumps(data))
@@ -581,7 +528,7 @@ class LockableBoardParent(BufferBase):
         control.content_address = 0
 
     def collect(self):
-        data = self.map.data
+        data = self.map
         free_blocks = 0
         for index in range(0, self._size):
             # block = BlockLock(self.map, offset)
@@ -599,7 +546,7 @@ class LockableBoardParent(BufferBase):
     def get_free_block(self):
         # maybe call self.collect automatically?
         id_ = threading.current_thread().native_id
-        data = self.map.data
+        data = self.map
         for offset in range(0, len(data), BlockLock._size):
             if data[offset] == State.garbage:
                 del self.blocks[offset]
@@ -627,8 +574,8 @@ class LockableBoardParent(BufferBase):
 
 
 class LockableBoardChild(BufferBase):
-    def __init__(self, buffer_ptr, buffer_length):
-        self.map = FileLikeArray(_remote_memory(buffer_ptr, buffer_length))
+    def __init__(self, remotearray):
+        self.map = remotearray
         self._size = len(self.map) // BlockLock._size
         #self.start_offset = random.randint(0, self._size)
 
@@ -677,5 +624,6 @@ class OwnableBuffer(BufferBase):
         LockableBoard object.
         """
 
-        self.map = FileLikeArray(payload)
+        self.map = RemoteArray(payload=payload)
+        self.map.start()
 

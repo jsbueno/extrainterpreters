@@ -11,7 +11,10 @@ def guard_internal_use(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         f = sys._getframe().f_back
-        if sys.modules["extrainterpreters"].__dict__.get("DEBUG", False):
+        # This can be called at interpreter shutdown, and extrainterpreters
+        # may no longer be in sys.modules:
+        extrainterpreters = sys.modules.get("extrainterpreters", None)
+        if extrainterpreters and extrainterpreters.__dict__.get("DEBUG", False):
             pass
         elif not f.f_globals.get("__name__").startswith("extrainterpreters."):
             raise RuntimeError(f"{func.__name__} can only be called from extrainterpreters code, under risk of causing a segmentation fault")
