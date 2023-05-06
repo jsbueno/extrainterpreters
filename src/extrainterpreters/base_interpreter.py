@@ -11,14 +11,16 @@ from . import interpreters, BFSZ, running_interpreters
 class BaseInterpreter:
 
     def __init__(self):
-        self.intno = None
+        # .intno and .id are both set to the interpreter id,
+        # but .intno is set to None when the interpreter is closed.
+        self.intno = self.id = None
         self.lock = threading.RLock()
 
     def start(self):
         if self.intno is not None:
             raise RuntimeError("Interpreter already started")
         with self.lock:
-            self.intno = interpreters.create()
+            self.intno = self.id = interpreters.create()
             running_interpreters.add(self)
             self.thread = None
             self._create_channel()
@@ -38,7 +40,7 @@ class BaseInterpreter:
                 interpreters.destroy(self.intno)
             except RuntimeError:
                 raise  ## raised if interpreter is running. TBD: add a timeout mechanism
-            self.intno = False
+            self.intno = None
         self.thread = None
         try:
             running_interpreters.remove(self)

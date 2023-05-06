@@ -23,9 +23,11 @@ running_interpreters = weakref.WeakSet()
 
 from .memoryboard import ProcessBuffer, RemoteArray
 from .base_interpreter import BaseInterpreter
-from .queue import Pipe, SingleQueue
+from .queue import Pipe, SingleQueue, Queue
 from .simple_interpreter import SimpleInterpreter as Interpreter
 
+
+get_current = interpreters.get_current
 
 
 def list_all():

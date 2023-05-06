@@ -3,6 +3,7 @@ import pickle
 import selectors
 import time
 import warnings
+from collections import deque
 from functools import wraps
 from textwrap import dedent as D
 
@@ -128,7 +129,17 @@ def _child_only(func):
     return wrapper
 
 
-class SingleQueue:
+class _ABSQueue:
+    def put_nowait(self, item):
+        """Equivalent to put(item, block=False)."""
+        return self.put(item, block=False)
+
+    def get_nowait(self):
+        """Equivalent to get(False)"""
+        return self.get(False)
+
+
+class SingleQueue(_ABSQueue):
     """ "simplex" queue implementation, able to connect a parent interpreter
     to a single sub-interpreter.
 
@@ -237,9 +248,6 @@ class SingleQueue:
         self._size += 1
 
 
-    def put_nowait(self, item):
-        """Equivalent to put(item, block=False)."""
-        return self.put(item, block=False)
 
     @_child_only
     def get(self, block=True, timeout=None):
@@ -248,9 +256,6 @@ class SingleQueue:
         # TBD: many fails. fix
         return pickle.load(self.pipe)
 
-    def get_nowait(self):
-        """Equivalent to get(False)"""
-        return self.get(False)
 
     """Two methods are offered to support tracking whether enqueued tasks have been fully processed by daemon consumer interpreters
     """
@@ -265,7 +270,7 @@ class SingleQueue:
         """
         pass
 
-    _parent_only
+    @_parent_only
     def join(self):
         """Blocks until all items in the queue have been gotten and processed.
 
@@ -288,3 +293,21 @@ class MultiplexEnd: #(_QueueChannelBase):
     def get(self, block=True, timeout=None):
         """retrieves a controled lockable block"""
 
+
+
+class Queue(_ABSQueue):
+    def __init__(self, size=None):
+        self.size = size
+        self._data = deque(maxlen=size)
+
+
+    def get(self, block=True, timeout=None):
+        return self._data.popleft()
+
+    def put(self, item, block=True, timeout=None):
+        self._data.append(item)
+
+
+
+    def __repr__(self):
+        return f"{self.__.__class__.__name__}(size={self.size})"

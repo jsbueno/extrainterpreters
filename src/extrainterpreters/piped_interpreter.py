@@ -11,7 +11,6 @@ from .simple_interpreter import _BufferedInterpreter
 from .utils import Field, StructBase
 
 
-
 class WorkerOpcodes: # WorkerOpecodes
     close = 0
     import_module = 1
