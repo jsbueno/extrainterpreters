@@ -1,3 +1,9 @@
+"""
+Author: João S. O. Bueno
+Special Thanks: Eric Snow for his work on subinterpreters and a per-interpreter GIL
+
+"""
+
 import atexit
 import sys
 import weakref
@@ -11,9 +17,8 @@ except ImportError:
     except ImportError:
         raise ImportError(D("""
             interpreters module not available in this Python install.
-            If you are early to it (before 3.12 beta), you need to build the
-            per-interpreter-gil-new branch from
-            https://github.com/ericsnowcurrently/cpython.git
+            If you are early to it (before 3.12 beta), you need to build an up-to-date
+            cPython 3.12 from the git main branch.
             """))
 
 

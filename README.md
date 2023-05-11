@@ -5,9 +5,8 @@ Utilities to make use of new
 
 Status: alpha
 
-Usage: for now one must build cpython 
-from Eric Snow at https://github.com/ericsnowcurrently/cpython.git
-, branch per-interpreter-gil-new
+Usage: for now one must build cpython 3.12 alpha from the main cpython branch
+
 
 then, just import "extrainterpreters" and use the `Interpreter` class
 as a wrapper to the subinterpreter represented by a single integer
