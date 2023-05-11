@@ -106,8 +106,10 @@ _memoryboard_modexec(PyObject *m)
     return 0;
 }
 
+
 static PyModuleDef_Slot _memoryboard_slots[] = {
     {Py_mod_exec, _memoryboard_modexec},
+    {Py_mod_multiple_interpreters, Py_MOD_PER_INTERPRETER_GIL_SUPPORTED},
     {0, NULL}
 };
 
