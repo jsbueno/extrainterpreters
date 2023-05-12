@@ -509,7 +509,7 @@ class LockableBoardParent(BufferBase):
         offset, control = self.get_free_block()
         control.content_address, control.content_length = data.map._data_for_remote()
         self.blocks[offset] = data
-        control.owner = int(interpreters.current_id())
+        control.owner = int(interpreters.get_current())
         control.state = State.ready
         control.lock = 0
         return offset // BlockLock._size, control

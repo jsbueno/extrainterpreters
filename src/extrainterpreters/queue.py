@@ -12,8 +12,8 @@ import queue as threading_queue
 from .utils import guard_internal_use, StructBase, Field, _InstMode
 from .memoryboard import LockableBoard, RemoteArray, RemoteState
 from . import interpreters
-from .resources import select, FILE_WATCHER
-
+from .resources import EISelector
+_DEFAULT_BLOCKING_TIMEOUT = 5  #
 
 class Pipe:
     """Full Duplex Pipe class.
@@ -31,7 +31,6 @@ class Pipe:
     # of the Pipe that was pickled in parent interpreter
     def __getstate__(self):
         state = self.__dict__.copy()
-        # del state["_selector"]
         return state
 
     @guard_internal_use
@@ -46,9 +45,10 @@ class Pipe:
 
     def _post_init(self):
         self.closed = False
-        #self._selector = selectors.DefaultSelector()
-        FILE_WATCHER.register(self.counterpart_fds[0], selectors.EVENT_READ, self._read_ready_callback)
+        EISelector.register(self.counterpart_fds[0], selectors.EVENT_READ, self._read_ready_callback)
+        EISelector.register(self.counterpart_fds[1], selectors.EVENT_WRITE, self._write_ready_callback)
         self._read_ready_flag = False
+        self._write_ready_flag = False
 
     @classmethod
     def counterpart_from_fds(cls, originator_fds, counterpart_fds):
@@ -84,20 +84,26 @@ class Pipe:
         return result
 
     def _read_ready_callback(self, key, *args):
-        print("strogo" * 100)
         self._read_ready_flag = True
 
     def _read_ready(self, timeout=0):
         # Think better on this:
-        FILE_WATCHER.select(timeout=timeout)
+        EISelector.select(timeout=timeout)
         result = self._read_ready_flag
         self._read_ready_flag = False
-        return True
+        return result
 
     select = _read_ready
         #if len(events) == 1 and events[0][0].fd == self.counterpart_fds[0]:
             #return True
         #return False
+    def _write_ready_callback(self, *args):
+        self._write_ready_flag = True
+
+    def select_for_write(self, timeout=None):
+        self._write_ready_flag = False
+        EISelector.select(timeout=timeout)
+        return self._write_ready_flag
 
     def readline(self):
         # needed by pickle.load
@@ -189,13 +195,11 @@ class SingleQueue(_ABSQueue):
 
     def _post_init_parent(self):
         self._writing_fd = self.pipe.originator_fds[1]
-        #self._write_selector = selectors.DefaultSelector()
-        FILE_WATCHER.register(self._writing_fd, selectors.EVENT_WRITE, self._ready_to_write)
+        EISelector.register(self._writing_fd, selectors.EVENT_WRITE, self._ready_to_write)
         self._ready_to_write_flag = False
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        #state.pop("_write_selector")
         return state
 
     @guard_internal_use
@@ -241,7 +245,7 @@ class SingleQueue(_ABSQueue):
         self._ready_to_write_flag = True
 
     def _ready_to_send(self, timeout=0):
-        select(timeout=timeout)
+        EISelector.select(timeout=timeout)
         result = self._ready_to_write_flag
         self._ready_to_write_flag = False
         return result
@@ -329,6 +333,8 @@ class Queue(_ABSQueue):
         self._parent_interp = int(interpreters.get_current())
         self._post_init()
         self._child_pipes = {}
+        self._items_by_child = {}
+        EISelector.register(self._main_pipe.counterpart_fds[0], selectors.EVENT_READ, self._dispatch_return_opcode)
 
     @property
     def endpoints(self):
@@ -337,16 +343,17 @@ class Queue(_ABSQueue):
         return list(self._child_pipes.keys())
 
     @_parent_only
-    def _dispatch_return_opcode(self):
+    def _dispatch_return_opcode(self, *args):
 
-        if not self._main_pipe.select():
-            return 0
-        opcode = self._main_pipe.read(1)[0]
-        if opcode == _QueueReturnOpcodes.BUILD_PIPE:
-            pipe = pickle.loads(self._main_pipe.read())
-            self._child_pipes[pipe._bound_interp] = pipe
-            return 1
-        return 2
+        while self._main_pipe.select():
+            opcode = self._main_pipe.read(1)[0]
+            match opcode:
+                case _QueueReturnOpcodes.BUILD_PIPE:
+                    pipe = pickle.loads(self._main_pipe.read())
+                    self._child_pipes[pipe._bound_interp] = pipe
+                case _QueueReturnOpcodes.ACK_ELEMENT:
+                    interpreter = int.from_bytes(self._main_pipe.read(2), "little")
+                    self._items_by_child[interpreter] += self._items_by_child.get(interpreter, 0)
 
     @property
     def mode(self):
@@ -356,6 +363,7 @@ class Queue(_ABSQueue):
         ns = self.__dict__.copy()
         del ns["_data"]
         del ns["_child_pipes"]
+        del ns["_items_by_child"]
         return ns
 
     def __setstate__(self, state):
@@ -372,21 +380,52 @@ class Queue(_ABSQueue):
     def _post_init(self):
         self._data = deque(maxlen=self.size)
 
+    @_child_only
     def _child_post_init(self):
         self._private_pipe = Pipe()
         payload = pickle.dumps(self._private_pipe)
         with self._main_pipe.lock:
             self._main_pipe.write(_QueueReturnOpcodes.BUILD_PIPE.to_bytes(1, "little") + payload)
 
+    def _fetch(self):
+        """
+        _inner function - must be called only from .get()
+        """
+
+        tmp = self._buffer.get_work_data()
+        if not tmp:
+            return
+        # Winner of the race to fetch object, consumes ready byte on
+        # on signaler pipe. (Byte is there - indicating an object
+        # had been post on the board - it is detected in the select
+        # inside the get method.
+        self._main_pipe.read(1)
+        _, obj = tmp
+        self._data.append(obj)
+        with self._main_pipe.lock:
+            self._main_pipe.write(_QueueReturnOpcodes.ACK_ELEMENT.to_bytes(1, "little") + int(interpreters.get_current()).to_bytes(2, "little"))
+
     def get(self, block=True, timeout=None):
+        if not block:
+            timeout=None
+        elif not timeout:
+            timeout = _DEFAULT_BLOCKING_TIMEOUT
+        if self._main_pipe.select(timeout=timeout):
+            # FIXME: POSSIBLE PROBLEM RIGHT NOW: this select might be return False
+            self._fetch()
         if self._data:
             return self._data.popleft()
-        return None
+        # FIXME: no way to distinguish from enqueued "None" values
+        #return None
+        raise ValueError("no data")
 
     def put(self, item, block=True, timeout=None):
-        self._data.append(item)
-
-
+        if block and not timeout:
+            timeout = _DEFAULT_BLOCKING_TIMEOUT
+        if self.mode == _InstMode.parent:
+            self._buffer.new_item(item)
+            if self._main_pipe.select_for_write(timeout=timeout):
+                self._main_pipe.write(b"\x01")
 
     def __repr__(self):
-        return f"{self.__.__class__.__name__}(size={self.size})"
+        return f"{self.__class__.__name__}(size={self.size})"

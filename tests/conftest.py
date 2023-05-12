@@ -1,3 +1,8 @@
+import warnings
+
+# Filter out deprecation warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="_pytest.assertion.rewrite")
+
 import pytest
 
 @pytest.fixture

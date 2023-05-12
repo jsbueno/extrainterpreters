@@ -73,25 +73,25 @@ def test_queue_can_build_private_pipe_once_active_on_subinterpreter(lowlevel):
     assert isinstance(q._child_pipes[interp.intno], Pipe)
 
 
-
 def test_queue_sent_to_other_interpreter():
-    q = Queue()
-    q_pickle = pickle.dumps(q)
-    q.put((1, 2))
+    queue = Queue()
+    q_pickle = pickle.dumps(queue)
+    #q.put((1, 2))
     with ei.Interpreter() as interp:
 
         interp.run_string(D(f"""\
             import extrainterpreters
             extrainterpreters.DEBUG=True
             import pickle
-
-            def func(queue):
-                values = queue.get()
-                return sum(values)
-
             queue = pickle.loads({q_pickle})
-            queue.put(func(queue))
         """))
+        breakpoint()
+        queue.put((1, 2))
+        interp.run_string(D(f"""\
+            values = queue.get()
+            data = sum(values)
+        """))
+        interp.run_string("queue.put(values)")
         assert queue.get() == 3
 
 @pytest.mark.skip
