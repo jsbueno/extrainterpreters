@@ -2,6 +2,8 @@ from selectors import DefaultSelector
 from types import MethodType
 import warnings
 
+from datetime import datetime
+
 
 # Unified selector for all Pipes, queues in a given interpreter:
 
@@ -51,7 +53,12 @@ class EISelector:
         self.select_depth += 1
         if self.select_depth == 1:
             self.entered_callbacks = set()
-        for key, events in self.selector.select(timeout):
+        x = self.selector.select(timeout)
+        from . import interpreters
+        if interpreters.get_current() != 0:
+            with open("bla", "at") as f:
+                f.write(f"{datetime.now().isoformat()} - {x}\n\n")
+        for key, events in x:
             for callback in key.data:
                 if callback not in self.entered_callbacks:
                     self.entered_callbacks.add(callback)

@@ -161,3 +161,18 @@ class StructBase:
         field_str = "\n".join(field_data)
         return(f"{self.__class__.__name__}:\n{field_str}\n")
 
+
+def non_reentrant(func):
+    depth = 0
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        nonlocal depth
+        if depth == 1:
+            return
+        depth += 1
+        try:
+            result = func(*args, **kwargs)
+        finally:
+            depth -= 1
+        return result
+    return wrapper

@@ -256,6 +256,7 @@ class RemoteArray:
         if self.header.state != RemoteState.building:
             raise RuntimeError("Cannot enter buffer: invalid state")
         self.header.state = RemoteState.ready
+        self._data_state = RemoteDataState.read_write
         return self
 
     def start(self):
@@ -483,15 +484,18 @@ class BlockLock(StructBase):
     content_length = Field(8)
 
 
-class LockableBoardParent(BufferBase):
+class LockableBoard:
     maxblocks = 2048
-    def __init__(self):
-        self._size = self.maxblocks
-        self.map = RemoteArray(size=self.maxblocks * BlockLock._size)
+    def __init__(self, size=None):
+        self._size = size or self.maxblocks
+        self.map = RemoteArray(size=self._size * BlockLock._size)
         self.map.start()
-        #self.root = LockableBoardRoot.from_data(self.map, 0)
-        #self.root.size = 0
         self.blocks = {}
+        self._parent_interp = int(interpreters.get_current())
+
+    @property
+    def mode(self):
+        return _InstMode.parent if interpreters.get_current() == self._parent_interp else _InstMode.child
 
     def __getstate__(self):
         ns = self.__dict__.copy()
@@ -500,11 +504,24 @@ class LockableBoardParent(BufferBase):
 
     @guard_internal_use
     def __setstate__(self, state):
-        self.__class__ = LockableBoardChild
         self.__dict__.update(state)
         self.map.start()
+        self.blocks = {}
 
     def new_item(self, data):
+        """Atomically post a pickled Python object in a
+        shareable buffer.
+
+        Objects posted can be retrieved out-of-order
+        by calling "fetch_item".
+
+        Whatever caller posts a new_item is responsible to call `.collect()`  or `del`
+        at some point in the future to ensure origin-side data of objects
+        that were read in other interpreters is collected, otherwise
+        there will be leaks.
+
+        (All data posted live as an anchor on "self.blocks")
+        """
         data = OwnableBuffer(pickle.dumps(data))
         offset, control = self.get_free_block()
         control.content_address, control.content_length = data.map._data_for_remote()
@@ -521,13 +538,16 @@ class LockableBoardParent(BufferBase):
     def __delitem__(self, index):
         offset = BlockLock._size * index
         control = BlockLock._from_data(self.map, offset)
-        if control.lock != 0:
-            raise ValueError("Item is locked")
+        lock_ptr = self.map._data_for_remote()[0] + offset + 1
+        if not _atomic_byte_lock(lock_ptr):
+            raise ValueError("Could not get block lock for deleting")
         if control.state not in (State.not_initialized, State.ready, State.garbage):
             raise ValueError("Invalid State")
+
         self.blocks.pop(offset, None)
         control.state = State.not_initialized
         control.content_address = 0
+        control.lock = 0
 
     def collect(self):
         data = self.map
@@ -539,9 +559,13 @@ class LockableBoardParent(BufferBase):
             # the above two lines instead of the "low level":
             offset = index * BlockLock._size
             if data[offset] == State.garbage:
-                del self.blocks[offset]
-                data[offset] = data[offset + 1] = 0
-            if data[offset] == 0:
+                try:
+                    del self[index]
+                except ValueError:
+                    pass
+            elif index in self.blocks and data[offset] == State.not_initialized:
+                del self.blocks[index]
+            if data[offset] == State.not_initialized:
                 free_blocks += 1
         return free_blocks
 
@@ -551,7 +575,7 @@ class LockableBoardParent(BufferBase):
         data = self.map
         for offset in range(0, len(data), BlockLock._size):
             if data[offset] == State.garbage:
-                del self.blocks[offset]
+                self.blocks.pop(offset, None)
                 data[offset] = data[offset + 1] = 0
             if data[offset] == 0 and data[offset+1] == 0:
                 lock_ptr = self.map._data_for_remote()[0] + offset + 1
@@ -566,19 +590,53 @@ class LockableBoardParent(BufferBase):
             raise ValueError("Board full. Can't allocate data block to send to remote interpreter")
         return offset, block
 
+
+    def fetch_item(self):
+        """Atomically retrieves an item posted with "new_item" and frees its block
+        """
+        control = BlockLock._from_data(self.map, 0)
+        for index in range(0, self._size):
+            offset = index * BlockLock._size
+            control._offset = offset
+            if control.state != State.ready:
+                continue
+            lock_ptr = self.map._data_for_remote()[0] + offset + 1
+            if _atomic_byte_lock(lock_ptr):
+                break
+        else:
+            return None
+        control.owner = threading.current_thread().native_id
+        control.state = State.locked
+        control.lock = 0
+        buffer = _remote_memory(control.content_address, control.content_length)
+        data = pickle.loads(buffer)
+        del buffer
+        control.state = State.garbage
+        # TBD: caller could have a channel to comunicate the parent thread its done
+        # with the buffer.
+        return index, data
+
+
     # not implementing __len__ because occupied
     # blocks are not always in sequence. Trying
     # to iter with len + getitem will yield incorrect results.
 
+    def close(self):
+        if self.map:
+            self.map.close()
+            self.map = None
+
+    def __del__(self):
+        self.close()
+
     def __repr__(self):
-        free_blocks = self.collect()
+        if self.mode == _InstMode.parent:
+            free_blocks = self.collect()
         return f"LockableBoard with {free_blocks} free slots."
 
 
-LockableBoard = LockableBoardParent
 
-
-class LockableBoardChild(BufferBase):
+class LockableBoardChild__(BufferBase):
     def __init__(self, remotearray):
         self.map = remotearray
         self._size = len(self.map) // BlockLock._size

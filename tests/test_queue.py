@@ -51,7 +51,6 @@ def test_singlequeue_is_unpickled_as_counterpart_and_comunicates(lowlevel):
     interp.run_string(f"assert cc == {obj}")
     interp.close()
 
-
 def test_queue_send_object():
     q = Queue()
     q.put((1,2))

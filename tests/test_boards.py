@@ -1,7 +1,9 @@
 import pickle
 import time
+from textwrap import dedent as d
 
-from extrainterpreters.memoryboard import LockableBoardParent, LockableBoardChild, _CrossInterpreterStructLock, RemoteArray
+
+from extrainterpreters.memoryboard import LockableBoard, _CrossInterpreterStructLock, RemoteArray
 from extrainterpreters import memoryboard
 from extrainterpreters.utils import StructBase, Field
 from extrainterpreters import Interpreter
@@ -11,17 +13,36 @@ import extrainterpreters as ei
 import pytest
 
 def test_lockableboard_single_item_back_and_forth(lowlevel):
-    board = LockableBoardParent()
+    board = LockableBoard()
     size = board.collect()
     index, _ = board.new_item(obj:={"a":1})
     assert index == 0
     assert board.collect() == size - 1
 
-    board2 = LockableBoardChild(pickle.loads(pickle.dumps(board.map)).start())
-    index, new_obj = board2.get_work_data()
+    board2 = pickle.loads(pickle.dumps(board))
+    index, new_obj = board2.fetch_item()
     assert index == 0
     assert new_obj == obj and new_obj is not obj
     assert board.collect() == size
+
+def test_lockableboard_to_other_interpreter(lowlevel):
+    board = LockableBoard()
+    size = board.collect()
+    interp = ei.Interpreter().start()
+    board.new_item((1,2))
+    interp.run_string(d(f"""
+        import extrainterpreters; extrainterpreters.DEBUG=True
+        board = pickle.loads({pickle.dumps(board)})
+        index, item = board.fetch_item()
+        assert item == (1,2)
+        board.new_item((3,4))
+    """))
+    index, item = board.fetch_item()
+    assert item == (3,4)
+    assert board.collect() == size
+    # TBD: this design leaks "board.locks" items
+    # until a collection is also done on the subinterpreter.
+    # (leaking is limited to the number of slots on the memoryboard,tough)
 
 # FileLikeArray is no more
 #def test_filelikearray_creates_a_remote_memory_buffer_on_unpickle(lowlevel):
@@ -32,14 +53,14 @@ def test_lockableboard_single_item_back_and_forth(lowlevel):
     #cc[0] = 42
     #assert aa[0] == 42
 
-
-def test_lockableboard_unpickles_as_child_counterpart(lowlevel):
-    import pickle
-    aa = LockableBoardParent()
-    aa.new_item((1,2))
-    bb = pickle.loads(pickle.dumps(aa))
-    assert isinstance(bb, LockableBoardChild)
-    assert bb.get_work_data()[1] == (1, 2)
+# LockableBoardChild is no more
+#def test_lockableboard_unpickles_as_child_counterpart(lowlevel):
+    #import pickle
+    #aa = LockableBoardParent()
+    #aa.new_item((1,2))
+    #bb = pickle.loads(pickle.dumps(aa))
+    #assert isinstance(bb, LockableBoardChild)
+    #assert bb.()[1] == (1, 2)
 
 
 @pytest.fixture
