@@ -10,13 +10,15 @@ from textwrap import dedent as D
 import queue as threading_queue
 
 from .utils import guard_internal_use, StructBase, Field, _InstMode
+from .memoryboard import LockableBoard, RemoteArray, RemoteState
+from . import interpreters
+from .resources import select, FILE_WATCHER
 
 
 class Pipe:
     """Full Duplex Pipe class.
     """
     def __init__(self):
-        from . import interpreters
         self.originator_fds = os.pipe()
         self.counterpart_fds = os.pipe()
         self._all_fds = self.originator_fds + self.counterpart_fds
@@ -29,7 +31,7 @@ class Pipe:
     # of the Pipe that was pickled in parent interpreter
     def __getstate__(self):
         state = self.__dict__.copy()
-        del state["_selector"]
+        # del state["_selector"]
         return state
 
     @guard_internal_use
@@ -44,8 +46,9 @@ class Pipe:
 
     def _post_init(self):
         self.closed = False
-        self._selector = selectors.DefaultSelector()
-        self._selector.register(self.counterpart_fds[0], selectors.EVENT_READ, self.read_blocking)
+        #self._selector = selectors.DefaultSelector()
+        FILE_WATCHER.register(self.counterpart_fds[0], selectors.EVENT_READ, self._read_ready_callback)
+        self._read_ready_flag = False
 
     @classmethod
     def counterpart_from_fds(cls, originator_fds, counterpart_fds):
@@ -73,14 +76,28 @@ class Pipe:
             data = data.encode("utf-8")
         os.write(self.originator_fds[1], data)
 
+    write = send
+
     def read_blocking(self, amount=4096):
-        return os.read(self.counterpart_fds[0], amount)
+        result = os.read(self.counterpart_fds[0], amount)
+        self._read_ready_flag = False
+        return result
+
+    def _read_ready_callback(self, key, *args):
+        print("strogo" * 100)
+        self._read_ready_flag = True
 
     def _read_ready(self, timeout=0):
-        events = self._selector.select(timeout=timeout)
-        if len(events) == 1 and events[0][0].fd == self.counterpart_fds[0]:
-            return True
-        return False
+        # Think better on this:
+        FILE_WATCHER.select(timeout=timeout)
+        result = self._read_ready_flag
+        self._read_ready_flag = False
+        return True
+
+    select = _read_ready
+        #if len(events) == 1 and events[0][0].fd == self.counterpart_fds[0]:
+            #return True
+        #return False
 
     def readline(self):
         # needed by pickle.load
@@ -110,6 +127,16 @@ class Pipe:
 
     def __del__(self):
         self.close()
+
+
+class LockablePipe(Pipe):
+    def __init__(self):
+        # TBD: a "multiinterpreter lock" will likely be a wrapper over this patterh
+        # use that as soon as it is done:
+        self._lock_array = RemoteArray(size=0)
+        self._lock_array.header.state = RemoteState.ready
+        self.lock = self._lock_array._lock
+        super().__init__()
 
 
 def _parent_only(func):
@@ -162,12 +189,13 @@ class SingleQueue(_ABSQueue):
 
     def _post_init_parent(self):
         self._writing_fd = self.pipe.originator_fds[1]
-        self._write_selector = selectors.DefaultSelector()
-        self._write_selector.register(self._writing_fd, selectors.EVENT_WRITE, None)
+        #self._write_selector = selectors.DefaultSelector()
+        FILE_WATCHER.register(self._writing_fd, selectors.EVENT_WRITE, self._ready_to_write)
+        self._ready_to_write_flag = False
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        state.pop("_write_selector")
+        #state.pop("_write_selector")
         return state
 
     @guard_internal_use
@@ -209,15 +237,19 @@ class SingleQueue(_ABSQueue):
             return True
         return self.size >= self.maxsize
 
+    def _ready_to_write(self, *args):
+        self._ready_to_write_flag = True
+
     def _ready_to_send(self, timeout=0):
-        ready = self._write_selector.select(timeout=timeout)
-        return len(ready) == 1 and ready[0][0].fd == self._writing_fd
+        select(timeout=timeout)
+        result = self._ready_to_write_flag
+        self._ready_to_write_flag = False
+        return result
 
     @_parent_only
     def put(self, item, block=True, timeout=None):
         """Put item into the queue. If optional args block is true and timeout is None (the default), block if necessary until a free slot is available. If timeout is a positive number, it blocks at most timeout seconds and raises the Full exception if no free slot was available within that time. Otherwise (block is false), put an item on the queue if a free slot is immediately available, else raise the Full exception (timeout is ignored in that case).
         """
-
         ready = False
         if self._ready_to_send():
             ready = True
@@ -282,27 +314,74 @@ class SingleQueue(_ABSQueue):
         self.pipe.close()
 
 
-
-
-class MultiplexEnd: #(_QueueChannelBase):
-
-    def __init__(self, pipe):
-        pass
-
-    @_child_only
-    def get(self, block=True, timeout=None):
-        """retrieves a controled lockable block"""
-
+class _QueueReturnOpcodes:
+    NOP = 0
+    BUILD_PIPE = 1
+    ACK_ELEMENT = 2
+    SENT_ITEM = 3
 
 
 class Queue(_ABSQueue):
     def __init__(self, size=None):
         self.size = size
-        self._data = deque(maxlen=size)
+        self._buffer = LockableBoard()
+        self._main_pipe = LockablePipe()
+        self._parent_interp = int(interpreters.get_current())
+        self._post_init()
+        self._child_pipes = {}
 
+    @property
+    def endpoints(self):
+        if self.mode == _InstMode.child:
+            return [self._parent_interp]
+        return list(self._child_pipes.keys())
+
+    @_parent_only
+    def _dispatch_return_opcode(self):
+
+        if not self._main_pipe.select():
+            return 0
+        opcode = self._main_pipe.read(1)[0]
+        if opcode == _QueueReturnOpcodes.BUILD_PIPE:
+            pipe = pickle.loads(self._main_pipe.read())
+            self._child_pipes[pipe._bound_interp] = pipe
+            return 1
+        return 2
+
+    @property
+    def mode(self):
+        return _InstMode.parent if interpreters.get_current() == self._parent_interp else _InstMode.child
+
+    def __getstate__(self):
+        ns = self.__dict__.copy()
+        del ns["_data"]
+        del ns["_child_pipes"]
+        return ns
+
+    def __setstate__(self, state):
+        if (intno:= interpreters.get_current()) == state["_parent_interp"]:
+            raise pickle.UnpicklingError("Can't de-serialize a queue in the parent interpreter")
+            # TBD: Pipes will have the flow reversed even working in the same
+            # interpreter. It is safer to forbid unpickling on parent
+            # OTOH: it may be interesting that queues can rount-trip back to the parent.
+            # (feasible with a registry)
+        self.__dict__.update(state)
+        self._post_init()
+        self._child_post_init()
+
+    def _post_init(self):
+        self._data = deque(maxlen=self.size)
+
+    def _child_post_init(self):
+        self._private_pipe = Pipe()
+        payload = pickle.dumps(self._private_pipe)
+        with self._main_pipe.lock:
+            self._main_pipe.write(_QueueReturnOpcodes.BUILD_PIPE.to_bytes(1, "little") + payload)
 
     def get(self, block=True, timeout=None):
-        return self._data.popleft()
+        if self._data:
+            return self._data.popleft()
+        return None
 
     def put(self, item, block=True, timeout=None):
         self._data.append(item)

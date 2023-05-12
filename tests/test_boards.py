@@ -6,6 +6,8 @@ from extrainterpreters import memoryboard
 from extrainterpreters.utils import StructBase, Field
 from extrainterpreters import Interpreter
 
+import extrainterpreters as ei
+
 import pytest
 
 def test_lockableboard_single_item_back_and_forth(lowlevel):
@@ -77,6 +79,17 @@ def test_structlock_locks(lockable):
         assert lockable.lock == 1
     with lock2:
         assert lockable.lock == 1
+
+@pytest.mark.parametrize("set_timeout", [None, 0.0001])
+def test_structlock_timeout_is_restored_on_acquire_fail(lockable, set_timeout):
+    lock = _CrossInterpreterStructLock(lockable, timeout=1)
+    lock2 = _CrossInterpreterStructLock(lockable, timeout=0.002)
+
+    with lock:
+        with pytest.raises((ei.ResourceBusyError, TimeoutError)):
+            with lock2.timeout(set_timeout):
+                pass
+    assert lock2._timeout == lock2._original_timeout
 
 
 def test_remotearray_base():

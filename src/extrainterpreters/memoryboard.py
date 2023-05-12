@@ -9,7 +9,7 @@ from collections.abc import MutableSequence
 
 from . import interpreters
 from . import _memoryboard
-from .utils import guard_internal_use, Field, DoubleField, StructBase, _InstMode
+from .utils import guard_internal_use, Field, DoubleField, StructBase, _InstMode, ResourceBusyError
 
 from ._memoryboard import _remote_memory, _address_and_size, _atomic_byte_lock
 
@@ -69,14 +69,16 @@ class _CrossInterpreterStructLock:
             return self
         if self._timeout is None:
             if not _atomic_byte_lock(self._lock_address):
-                raise RuntimeError("Couldn't acquire lock")
+                self._timeout = self._original_timeout
+                raise ResourceBusyError("Couldn't acquire lock")
         else:
             threshold = time.time() + self._timeout
             while time.time() <= threshold:
                 if _atomic_byte_lock(self._lock_address):
                     break
             else:
-                raise RuntimeError("Timeout on trying to acquire lock")
+                self._timeout = self._original_timeout
+                raise TimeoutError("Timeout trying to acquire lock")
         self._entered += 1
         return self
 
@@ -367,7 +369,9 @@ class RemoteArray:
         return time.monotonic() - timestamp <= self._ttl
 
     def close(self):
-        if self._mode == _InstMode.child:
+        # when called at interpreter shutdown, "_InstMode" may have been deleted
+        target_mode = _InstMode.child if globals()["_InstMode"] else "child"
+        if self._mode == target_mode:
             if self._data is None:
                 return
             with self._lock:
@@ -375,8 +379,6 @@ class RemoteArray:
             self._data_state = RemoteDataState.not_ready
             self._data = None
             return
-        # Parent closing - we have to take in account all the semantics
-        # for the 3 modes.
         with self._lock:
             early_stages = self.header.state in (RemoteState.building, RemoteState.ready)
             if early_stages:
@@ -468,7 +470,7 @@ class State:
     building = 1
     ready = 2
     locked = 3
-    # lock_complete = 4
+    #parent_review = 4
     garbage = 5
 
 
@@ -507,7 +509,7 @@ class LockableBoardParent(BufferBase):
         offset, control = self.get_free_block()
         control.content_address, control.content_length = data.map._data_for_remote()
         self.blocks[offset] = data
-        control.owner = 0
+        control.owner = int(interpreters.current_id())
         control.state = State.ready
         control.lock = 0
         return offset // BlockLock._size, control
@@ -571,6 +573,9 @@ class LockableBoardParent(BufferBase):
     def __repr__(self):
         free_blocks = self.collect()
         return f"LockableBoard with {free_blocks} free slots."
+
+
+LockableBoard = LockableBoardParent
 
 
 class LockableBoardChild(BufferBase):

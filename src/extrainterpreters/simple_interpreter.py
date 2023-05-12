@@ -199,6 +199,8 @@ class SimpleInterpreter(_BufferedInterpreter):
             # self.map[RET_OFFSET] = True
             self.exception = error
             print(f"Failing code\n {func}(*{args}, **{kwargs})\n, passed as {code}", file=sys.stderr)
+            # implementation still can't reraise the exception on main interpreter
+            # error.resolve()
             raise
 
     def close(self, *args):

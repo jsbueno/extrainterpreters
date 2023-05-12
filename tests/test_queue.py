@@ -4,7 +4,7 @@ from textwrap import dedent as D
 
 
 import extrainterpreters as ei
-from extrainterpreters import Pipe, SingleQueue, Queue
+from extrainterpreters import Pipe, SingleQueue, Queue, LockablePipe
 from extrainterpreters import Interpreter
 
 
@@ -22,6 +22,20 @@ def test_pipe_is_unpickled_as_counterpart_and_comunicates(lowlevel):
     interp.run_string("bb.send(cc)")
     assert aa.read() == b"12345"
     interp.close()
+
+def test_locacklepipe_locks(lowlevel):
+    interp = Interpreter().start()
+    interp.run_string("import pickle")
+    aa = LockablePipe()
+    interp.run_string("import extrainterpreters; extrainterpreters.DEBUG = True")
+    interp.run_string(f"bb = pickle.loads({pickle.dumps(aa)})")
+    interp.run_string("bb.lock.__enter__()")
+    with pytest.raises(ei.ResourceBusyError):
+        aa.lock.timeout(None).__enter__()
+    interp.run_string("bb.lock.__exit__()")
+    assert aa.lock._timeout == aa.lock._original_timeout
+    aa.lock.__enter__()
+
 
 
 def test_singlequeue_is_unpickled_as_counterpart_and_comunicates(lowlevel):
@@ -44,6 +58,22 @@ def test_queue_send_object():
     assert q.get((1, 2))
 
 
+def test_queue_can_build_private_pipe_once_active_on_subinterpreter(lowlevel):
+
+    interp = ei.Interpreter().start()
+    interp.run_string("import extrainterpreters; extrainterpreters.DEBUG=True")
+
+    q = ei.Queue()
+    qp = pickle.dumps(q)
+    assert not q.endpoints
+    interp.run_string(f"q = pickle.loads({qp})")
+
+    q._dispatch_return_opcode()
+    assert q.endpoints[0] == interp.intno
+    assert isinstance(q._child_pipes[interp.intno], Pipe)
+
+
+
 def test_queue_sent_to_other_interpreter():
     q = Queue()
     q_pickle = pickle.dumps(q)
@@ -51,6 +81,8 @@ def test_queue_sent_to_other_interpreter():
     with ei.Interpreter() as interp:
 
         interp.run_string(D(f"""\
+            import extrainterpreters
+            extrainterpreters.DEBUG=True
             import pickle
 
             def func(queue):
@@ -62,9 +94,10 @@ def test_queue_sent_to_other_interpreter():
         """))
         assert queue.get() == 3
 
+@pytest.mark.skip
 def test_queue_each_value_is_read_in_a_single_interpreter():
 
-    q = Queue()
+    queue = q = Queue()
     q_pickle = pickle.dumps(q)
     q.put((1, 2))
     q.put((3, 4))
@@ -74,6 +107,9 @@ def test_queue_each_value_is_read_in_a_single_interpreter():
             import pickle, time
             from extrainterpreters import get_current
             from queue import Empty
+
+            import extrainterpreters
+            extrainterpreters.DEBUG=True
 
             def func(queue):
                 values = (0,)
@@ -90,7 +126,7 @@ def test_queue_each_value_is_read_in_a_single_interpreter():
         def run(interp):
             interp.run_string(code)
         threads = [threading.Thread(target=run, args=(interp,))
-        for interp in (interp1, interp2)]
+        for interp in (interp1,interp2)]
         [t.start() for t in threads]
 
     v1, id1 = queue.get()

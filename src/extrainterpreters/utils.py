@@ -2,6 +2,9 @@ import struct
 import sys
 from functools import wraps
 
+class ResourceBusyError(RuntimeError): pass
+
+
 class _InstMode:
     parent = "parent"
     child = "child"
@@ -155,5 +158,6 @@ class StructBase:
         field_data = []
         for field_name in self._fields:
             field_data.append(f"    {field_name} = {getattr(self, field_name)}")
-        return(f"{self.__class__.__name__}:\n{"\n".join(field_data)}\n")
+        field_str = "\n".join(field_data)
+        return(f"{self.__class__.__name__}:\n{field_str}\n")
 

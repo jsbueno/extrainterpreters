@@ -1,4 +1,5 @@
 import inspect
+import time
 import threading
 import sys
 import pickle
@@ -7,6 +8,8 @@ from textwrap import dedent as D
 
 
 from . import interpreters, BFSZ, running_interpreters
+
+_TTL = 0.01
 
 class BaseInterpreter:
 
@@ -25,6 +28,7 @@ class BaseInterpreter:
             self.thread = None
             self._create_channel()
             self._init_interpreter()
+        self._started_at = time.monotonic()
         return self
 
     def __enter__(self):
@@ -37,6 +41,15 @@ class BaseInterpreter:
         with self.lock:
             self._close_channel()
             try:
+                while time.monotonic() - self._started_at < _TTL:
+                    # subinterpreters need sometime to stabilize.
+                    # shutting then imediatelly may lead to a segfault.
+                    time.sleep(0.002)
+                if interpreters.is_running(self.intno):
+                    # TBD: close on "at exit"
+                    # # but really, just enduser code running with "run_string΅ on other thread should
+                    # leave the sub-interpreter on this state.
+                    return
                 interpreters.destroy(self.intno)
             except RuntimeError:
                 raise  ## raised if interpreter is running. TBD: add a timeout mechanism
@@ -149,6 +162,7 @@ class BaseInterpreter:
         Mostly to mirror interpreters.run_string as a convenient method.
         """
         return interpreters.run_string(self.intno, code)
+
 
     def is_running(self):
         """Proxies interpreters.is_running

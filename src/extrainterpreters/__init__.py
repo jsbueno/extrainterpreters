@@ -26,9 +26,10 @@ BFSZ = 10_000_000
 
 running_interpreters = weakref.WeakSet()
 
+from .utils import ResourceBusyError
 from .memoryboard import ProcessBuffer, RemoteArray
 from .base_interpreter import BaseInterpreter
-from .queue import Pipe, SingleQueue, Queue
+from .queue import Pipe, LockablePipe, SingleQueue, Queue
 from .simple_interpreter import SimpleInterpreter as Interpreter
 
 
