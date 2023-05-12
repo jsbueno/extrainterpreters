@@ -1,5 +1,6 @@
 import pickle
 import threading
+import time
 from textwrap import dedent as D
 
 
@@ -56,20 +57,20 @@ def test_queue_send_object():
     q.put((1,2))
     assert q.get((1, 2))
 
+# gone are the private pipes inside queues.
+#def test_queue_can_build_private_pipe_once_active_on_subinterpreter(lowlevel):
 
-def test_queue_can_build_private_pipe_once_active_on_subinterpreter(lowlevel):
+    #interp = ei.Interpreter().start()
+    #interp.run_string("import extrainterpreters; extrainterpreters.DEBUG=True")
 
-    interp = ei.Interpreter().start()
-    interp.run_string("import extrainterpreters; extrainterpreters.DEBUG=True")
+    #q = ei.Queue()
+    #qp = pickle.dumps(q)
+    #assert not q.endpoints
+    #interp.run_string(f"q = pickle.loads({qp})")
 
-    q = ei.Queue()
-    qp = pickle.dumps(q)
-    assert not q.endpoints
-    interp.run_string(f"q = pickle.loads({qp})")
-
-    q._dispatch_return_opcode()
-    assert q.endpoints[0] == interp.intno
-    assert isinstance(q._child_pipes[interp.intno], Pipe)
+    #q._dispatch_return_opcode()
+    #assert q.endpoints[0] == interp.intno
+    #assert isinstance(q._child_pipes[interp.intno], Pipe)
 
 
 def test_queue_sent_to_other_interpreter():
@@ -84,16 +85,15 @@ def test_queue_sent_to_other_interpreter():
             import pickle
             queue = pickle.loads({q_pickle})
         """))
-        breakpoint()
         queue.put((1, 2))
         interp.run_string(D(f"""\
             values = queue.get()
             data = sum(values)
         """))
-        interp.run_string("queue.put(values)")
+        interp.run_string("queue.put(data)")
         assert queue.get() == 3
 
-@pytest.mark.skip
+
 def test_queue_each_value_is_read_in_a_single_interpreter():
 
     queue = q = Queue()
@@ -115,21 +115,31 @@ def test_queue_each_value_is_read_in_a_single_interpreter():
                 while True:
                     try:
                         values = queue.get(block=False)
-                        time.sleep(0.03)  # block this interpreter
+                        time.sleep(0.05)  # block this interpreter
                     except Empty:
                         return sum(values)
 
             queue = pickle.loads({q_pickle})
-            queue.put((func(queue), get_current()))
+            queue.put((func(queue), int(get_current())))
         """)
+        #breakpoint()
         def run(interp):
             interp.run_string(code)
-        threads = [threading.Thread(target=run, args=(interp,))
-        for interp in (interp1,interp2)]
-        [t.start() for t in threads]
 
-    v1, id1 = queue.get()
-    v2, id2 = queue.get()
+        threads = [threading.Thread(target=run, args=(interp,))
+            for interp in (interp1,interp2)]
+
+
+        # GETs taking place _before_ subinterpreter shutdown
+        threads[0].start()
+        time.sleep(0.025)
+        threads[1].start()
+        time.sleep(0.05)
+        v1, id1 = queue.get()
+        time.sleep(0.05)
+        v2, id2 = queue.get()
+        time.sleep(0.05)
+
     assert v1 == 3 and id1 == interp1.id
     assert v2 == 7 and id2 == interp2.id
     [t.join() for t in threads]

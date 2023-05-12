@@ -8,11 +8,15 @@ from functools import wraps
 from textwrap import dedent as D
 
 import queue as threading_queue
+from queue import Empty, Full  #  make these available to users
 
-from .utils import guard_internal_use, StructBase, Field, _InstMode, non_reentrant
+from .utils import guard_internal_use, StructBase, Field, _InstMode, non_reentrant, ResourceBusyError
 from .memoryboard import LockableBoard, RemoteArray, RemoteState
 from . import interpreters
 from .resources import EISelector
+
+
+
 _DEFAULT_BLOCKING_TIMEOUT = 5  #
 
 class Pipe:
@@ -31,11 +35,11 @@ class Pipe:
     # of the Pipe that was pickled in parent interpreter
     def __getstate__(self):
         state = self.__dict__.copy()
+        state.pop("_counterpart", None)
         return state
 
     @guard_internal_use
     def __setstate__(self, state):
-        from . import interpreters
         current = interpreters.get_current()
         self.__dict__.update(state)
         if current != state["_bound_interp"]:
@@ -61,11 +65,14 @@ class Pipe:
 
     @property
     def counterpart(self):
+        if hasattr(self, "_counterpart"):
+            return self._counterpart
         new_inst = type(self).__new__(type(self))
         new_inst.originator_fds = self.counterpart_fds
         new_inst.counterpart_fds = self.originator_fds
         new_inst._all_fds = ()
         new_inst._post_init()
+        self._counterpart = new_inst
         return new_inst
 
     def send(self, data):
@@ -330,8 +337,10 @@ class Queue(_ABSQueue):
     def __init__(self, size=None):
         self.size = size
         self._buffer = LockableBoard()
-        self._main_pipe = LockablePipe()
+        self._signal_pipe = LockablePipe()
+        self._data_pipe = LockablePipe()
         self._parent_interp = int(interpreters.get_current())
+        self._post_init()
 
     @property
     def endpoints(self):
@@ -362,7 +371,7 @@ class Queue(_ABSQueue):
     def _child_post_init(self):
         ...
 
-    def _fetch(self):
+    def _fetch(self, origin_pipe):
         """
         _inner function - must be called only from .get()
         """
@@ -370,147 +379,49 @@ class Queue(_ABSQueue):
         tmp = self._buffer.fetch_item()
         if not tmp:
             return
-        # Winner of the race to fetch object, consumes ready byte on
+        # Only the winner of the race to fetch object, consumes a ready byte on
         # on signaler pipe. (Byte is there - indicating an object
-        # had been post on the board - it is detected in the select
+        # had been posted on the board - it is detected in the select
         # inside the get method.
-        self._main_pipe.read(1)
+        origin_pipe.read(1)
         _, obj = tmp
         self._data.append(obj)
-        with self._main_pipe.lock:
-            self._main_pipe.write(_QueueReturnOpcodes.ACK_ELEMENT.to_bytes(1, "little") + int(interpreters.get_current()).to_bytes(2, "little"))
+        #with self._data_pipe.lock:
+            #self._data_pipe.write(_QueueReturnOpcodes.ACK_ELEMENT.to_bytes(1, "little") + int(interpreters.get_current()).to_bytes(2, "little"))
 
     def get(self, block=True, timeout=None):
         if not block:
-            timeout=None
+            timeout=0
         elif timeout is None:
             timeout = _DEFAULT_BLOCKING_TIMEOUT
-        with open("bla", "at") as f:
-            f.write("ready to get\n")
-        if self._main_pipe.select(timeout=timeout):
-            # FIXME: POSSIBLE PROBLEM RIGHT NOW: this select might return False
-            self._fetch()
+
+        origin_pipe = None
+        if self._signal_pipe.select(timeout=timeout):
+            origin_pipe = self._signal_pipe
+        elif self._signal_pipe.counterpart.select(timeout=0):
+            # so that we can retrieve items post in this same interpreter.
+            # (an expected Queue behavior)
+            origin_pipe = self._signal_pipe.counterpart
+
+        if origin_pipe:
+            self._fetch(origin_pipe)
+
         if self._data:
             return self._data.popleft()
-        # FIXME: no way to distinguish from enqueued "None" values
-        #return None
-        raise ValueError("no data")
+        raise threading_queue.Empty()
+
 
     def put(self, item, block=True, timeout=None):
         if block and not timeout:
             timeout = _DEFAULT_BLOCKING_TIMEOUT
-        if self.mode == _InstMode.parent:
-            self._buffer.new_item(item)
-            if self._main_pipe.select_for_write(timeout=timeout):
-                self._main_pipe.write(b"\x01")
+        index, item = self._buffer.new_item(item)
+        try:
+            self._signal_pipe.select_for_write(timeout=timeout)
+            self._signal_pipe.write(b"\x01")
+
+        except (ResourceBusyError, TimeoutError):
+            del self._buffer[index]
+            raise
 
     def __repr__(self):
         return f"{self.__class__.__name__}(size={self.size})"
-
-#class Queue(_ABSQueue):
-    #def __init__(self, size=None):
-        #self.size = size
-        #self._buffer = LockableBoard()
-        #self._main_pipe = LockablePipe()
-        #self._parent_interp = int(interpreters.get_current())
-        #self._post_init()
-        #self._child_pipes = {}
-        #self._items_by_child = {}
-        #EISelector.register(self._main_pipe.counterpart_fds[0], selectors.EVENT_READ, self._dispatch_return_opcode)
-
-    #@property
-    #def endpoints(self):
-        #if self.mode == _InstMode.child:
-            #return [self._parent_interp]
-        #return list(self._child_pipes.keys())
-
-    #@_parent_only
-    #@non_reentrant
-    #def _dispatch_return_opcode(self, *args):
-
-        #while self._main_pipe.select():
-            #opcode = self._main_pipe.read(1)[0]
-            #match opcode:
-                #case _QueueReturnOpcodes.BUILD_PIPE:
-                    #pipe = pickle.loads(self._main_pipe.read())
-                    #self._child_pipes[pipe._bound_interp] = pipe
-                #case _QueueReturnOpcodes.ACK_ELEMENT:
-                    #interpreter = int.from_bytes(self._main_pipe.read(2), "little")
-                    #self._items_by_child[interpreter] += self._items_by_child.get(interpreter, 0)
-
-    #@property
-    #def mode(self):
-        #return _InstMode.parent if interpreters.get_current() == self._parent_interp else _InstMode.child
-
-    #def __getstate__(self):
-        #ns = self.__dict__.copy()
-        #del ns["_data"]
-        #del ns["_child_pipes"]
-        #del ns["_items_by_child"]
-        #return ns
-
-    #def __setstate__(self, state):
-        #if (intno:= interpreters.get_current()) == state["_parent_interp"]:
-            #raise pickle.UnpicklingError("Can't de-serialize a queue in the parent interpreter")
-            ## TBD: Pipes will have the flow reversed even working in the same
-            ## interpreter. It is safer to forbid unpickling on parent
-            ## OTOH: it may be interesting that queues can rount-trip back to the parent.
-            ## (feasible with a registry)
-        #self.__dict__.update(state)
-        #self._post_init()
-        #self._child_post_init()
-
-    #def _post_init(self):
-        #self._data = deque(maxlen=self.size)
-
-    #@_child_only
-    #def _child_post_init(self):
-        #self._private_pipe = Pipe()
-        #payload = pickle.dumps(self._private_pipe)
-        #with self._main_pipe.lock:
-            #self._main_pipe.write(_QueueReturnOpcodes.BUILD_PIPE.to_bytes(1, "little") + payload)
-
-    #def _fetch(self):
-        #"""
-        #_inner function - must be called only from .get()
-        #"""
-
-        #tmp = self._buffer.get_work_data()
-        #if not tmp:
-            #return
-        ## Winner of the race to fetch object, consumes ready byte on
-        ## on signaler pipe. (Byte is there - indicating an object
-        ## had been post on the board - it is detected in the select
-        ## inside the get method.
-        #self._main_pipe.read(1)
-        #_, obj = tmp
-        #self._data.append(obj)
-        #with self._main_pipe.lock:
-            #self._main_pipe.write(_QueueReturnOpcodes.ACK_ELEMENT.to_bytes(1, "little") + int(interpreters.get_current()).to_bytes(2, "little"))
-
-    #def get(self, block=True, timeout=None):
-        #if not block:
-            #timeout=None
-        #elif timeout is None:
-            #timeout = _DEFAULT_BLOCKING_TIMEOUT
-        #with open("bla", "at") as f:
-            #f.write("ready to get\n")
-        #if self._main_pipe.select(timeout=timeout):
-            ## FIXME: POSSIBLE PROBLEM RIGHT NOW: this select might return False
-            #self._fetch()
-        #if self._data:
-            #return self._data.popleft()
-        ## FIXME: no way to distinguish from enqueued "None" values
-        ##return None
-        #raise ValueError("no data")
-
-    #def put(self, item, block=True, timeout=None):
-        #if block and not timeout:
-            #timeout = _DEFAULT_BLOCKING_TIMEOUT
-        #if self.mode == _InstMode.parent:
-            #self._buffer.new_item(item)
-            #if self._main_pipe.select_for_write(timeout=timeout):
-                #self._main_pipe.write(b"\x01")
-
-    #def __repr__(self):
-        #return f"{self.__class__.__name__}(size={self.size})"

@@ -576,8 +576,8 @@ class LockableBoard:
         for offset in range(0, len(data), BlockLock._size):
             if data[offset] == State.garbage:
                 self.blocks.pop(offset, None)
-                data[offset] = data[offset + 1] = 0
-            if data[offset] == 0 and data[offset+1] == 0:
+                # data[offset] = data[offset + 1] = 0
+            if data[offset] in (State.not_initialized, State.garbage) and data[offset+1] == 0:
                 lock_ptr = self.map._data_for_remote()[0] + offset + 1
                 if not _atomic_byte_lock(lock_ptr):
                     continue
@@ -633,50 +633,6 @@ class LockableBoard:
         if self.mode == _InstMode.parent:
             free_blocks = self.collect()
         return f"LockableBoard with {free_blocks} free slots."
-
-
-
-class LockableBoardChild__(BufferBase):
-    def __init__(self, remotearray):
-        self.map = remotearray
-        self._size = len(self.map) // BlockLock._size
-        #self.start_offset = random.randint(0, self._size)
-
-    def get_work_data(self):
-        control = BlockLock._from_data(self.map, 0)
-        for index in range(0, self._size):
-            offset = index * BlockLock._size
-            control._offset = offset
-            if control.state != State.ready:
-                continue
-            lock_ptr = self.map._data_for_remote()[0] + offset + 1
-            if _atomic_byte_lock(lock_ptr):
-                break
-        else:
-            return None
-        control.owner = threading.current_thread().native_id
-        control.state = State.locked
-        control.lock = 0
-        buffer = _remote_memory(control.content_address, control.content_length)
-        data = pickle.loads(buffer)
-        del buffer
-        control.state = State.garbage
-        # TBD: caller could have a channel to comunicate the parent thread its done
-        # with the buffer.
-        return index, data
-
-    def __delitem__(self, index):
-        raise TypeError("Removal of blocks can only happen on parent-side of Buffer")
-
-    def __getitem__(self, index):
-        offset = BlockLock._size * index
-        return BlockLock._from_data(self.map, offset)
-
-    def __del__(self):
-        self.close()
-
-    def __repr__(self):
-        return f"<Child LockableBoard on interpreter {interpreters.get_current()}>"
 
 
 class OwnableBuffer(BufferBase):
