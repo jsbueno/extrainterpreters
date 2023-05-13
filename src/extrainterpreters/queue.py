@@ -378,6 +378,9 @@ class Queue(_ABSQueue):
 
         tmp = self._buffer.fetch_item()
         if not tmp:
+            if self._buffer._items_closed_interpreters > 0:
+                self._buffer._items_closed_interpreters -= 1
+                origin_pipe.read(1)
             return
         # Only the winner of the race to fetch object, consumes a ready byte on
         # on signaler pipe. (Byte is there - indicating an object

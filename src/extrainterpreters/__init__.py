@@ -24,7 +24,13 @@ except ImportError:
 
 BFSZ = 10_000_000
 
-running_interpreters = weakref.WeakSet()
+running_interpreters = weakref.WeakValueDictionary()
+
+class RootInterpProxy:
+    intno = id = 0
+RootInterpProxy = RootInterpProxy()
+
+running_interpreters[0] = RootInterpProxy
 
 from .utils import ResourceBusyError
 from .memoryboard import ProcessBuffer, RemoteArray
@@ -37,24 +43,22 @@ get_current = interpreters.get_current
 
 
 def list_all():
-    """Returns a weakset with all active Interpreter instances
-
-    The idea is to have the same API available in "interpreters" working
-    for the higher level objects. But converting the weakset to a full list
-    could result in dangling references we don't want.
+    """Returns a list with all active subinterpreter instances
     """
-    return running_interpreters
+    return [interp  for id_, interp in running_interpreters.items() if id_ != 0]
 
 
 def destroy_dangling_interpreters():
-    for interp in list(running_interpreters):
+    for interp in running_interpreters.values():
+        if interp is RootInterpProxy:
+            continue
         try:
             interp.close()
-        except Exception:
+        except Exception as error:
             import warnings
             warnings.warn(D(f"""\
                 Failed to close dangling {interp}. Data exchange file
-                {interp.buffer.fname} may not have been erased.
+                {interp.buffer.fname} may not have been erased: {error}
                 """))
         else:
             print(f"{interp} closed at main interpreter exit", file=sys.stderr)

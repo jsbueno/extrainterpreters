@@ -1,6 +1,6 @@
 import pickle
 import time
-from textwrap import dedent as d
+from textwrap import dedent as D
 
 
 from extrainterpreters.memoryboard import LockableBoard, _CrossInterpreterStructLock, RemoteArray
@@ -30,7 +30,7 @@ def test_lockableboard_to_other_interpreter(lowlevel):
     size = board.collect()
     interp = ei.Interpreter().start()
     board.new_item((1,2))
-    interp.run_string(d(f"""
+    interp.run_string(D(f"""
         import extrainterpreters; extrainterpreters.DEBUG=True
         board = pickle.loads({pickle.dumps(board)})
         index, item = board.fetch_item()
@@ -169,3 +169,21 @@ def test_remotearray_not_deleted_before_ttl_expires():
     assert len(memoryboard._array_registry) == 0
     memoryboard._array_registry = xx
 
+
+def test_memoryboard_fetch_from_gone_interpreter_doesnot_crash(lowlevel):
+    interp = ei.Interpreter().start()
+    board = LockableBoard()
+    interp.run_string(D(f"""\
+        import extrainterpreters; extrainterpreters.DEBUG = True
+        board = pickle.loads({pickle.dumps(board)})
+        board.new_item((1,2))
+
+    """))
+    index, item = board.fetch_item()
+    assert item == (1,2)
+    interp.run_string(D(f"""\
+        board.new_item((3, 4))
+    """))
+    interp.close()
+    assert board.fetch_item() is None
+    pass

@@ -7,7 +7,7 @@ from functools import wraps
 
 from collections.abc import MutableSequence
 
-from . import interpreters
+from . import interpreters, running_interpreters
 from . import _memoryboard
 from .utils import guard_internal_use, Field, DoubleField, StructBase, _InstMode, ResourceBusyError
 
@@ -492,6 +492,11 @@ class LockableBoard:
         self.map.start()
         self.blocks = {}
         self._parent_interp = int(interpreters.get_current())
+        # This is incremented when a item that "looks good"
+        # was originally exported by a interpreter that is closed now.
+        # Also, queue.Queue uses and can decrement this to keep
+        # queues internal state.
+        self._items_closed_interpreters = 0
 
     @property
     def mode(self):
@@ -601,20 +606,31 @@ class LockableBoard:
             if control.state != State.ready:
                 continue
             lock_ptr = self.map._data_for_remote()[0] + offset + 1
-            if _atomic_byte_lock(lock_ptr):
-                break
+            if not _atomic_byte_lock(lock_ptr):
+                continue
+            if control.owner not in running_interpreters:
+                # Counter consumed by queues: they have to fetch
+                # a byte on the notification pipe if an item
+                # vanished due to this.
+                self._items_closed_interpreters += 1
+                control.state = State.garbage
+                control.lock = 0
+                continue
+            break
         else:
             return None
-        control.owner = threading.current_thread().native_id
+        # control.owner = threading.current_thread().native_id
         control.state = State.locked
         control.lock = 0
         buffer = _remote_memory(control.content_address, control.content_length)
-        data = pickle.loads(buffer)
+        item = pickle.loads(buffer)
         del buffer
+        # Maybe add an option to "peek" an item only?
+        # all that would be needed would be to restore state to "ready"
         control.state = State.garbage
         # TBD: caller could have a channel to comunicate the parent thread its done
         # with the buffer.
-        return index, data
+        return index, item
 
 
     # not implementing __len__ because occupied

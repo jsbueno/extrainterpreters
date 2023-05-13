@@ -7,7 +7,7 @@ from textwrap import dedent as D
 import extrainterpreters as ei
 from extrainterpreters import Pipe, SingleQueue, Queue, LockablePipe
 from extrainterpreters import Interpreter
-
+from extrainterpreters.queue import Empty
 
 import pytest
 
@@ -122,7 +122,6 @@ def test_queue_each_value_is_read_in_a_single_interpreter():
             queue = pickle.loads({q_pickle})
             queue.put((func(queue), int(get_current())))
         """)
-        #breakpoint()
         def run(interp):
             interp.run_string(code)
 
@@ -144,3 +143,50 @@ def test_queue_each_value_is_read_in_a_single_interpreter():
     assert v2 == 7 and id2 == interp2.id
     [t.join() for t in threads]
 
+
+def test_queue_get_value_from_subinterpreter():
+
+    queue = q = Queue()
+    q_pickle = pickle.dumps(q)
+
+    code = D("""\
+        import extrainterpreters; extrainterpreters.DEBUG=1
+        from extrainterpreters import get_current
+        queue = pickle.loads({q_pickle})
+        queue.put({value})
+    """)
+
+    with ei.Interpreter() as interp1:
+        interp1.run_string(code.format(q_pickle=q_pickle, value=(1,2)))
+        assert queue.get() == (1,2)
+    pass
+
+
+
+def test_queue_trying_to_get_value_from_closed_interpreter_doesnot_break_queue():
+
+    queue = q = Queue()
+    q_pickle = pickle.dumps(q)
+
+    code = D("""\
+        import extrainterpreters; extrainterpreters.DEBUG=1
+        from extrainterpreters import get_current
+        queue = pickle.loads({q_pickle})
+        queue.put({value1})
+        queue.put({value2})
+    """)
+
+    with ei.Interpreter() as interp1:
+        interp1.run_string(code.format(q_pickle=q_pickle, value1=(1,2), value2=(1,2)))
+        assert queue.get() == (1,2)
+    with pytest.raises(Empty):
+        queue.get(block=False)
+
+    with ei.Interpreter() as interp2:
+        interp2.run_string(code.format(q_pickle=q_pickle, value1=(1,2), value2=(1,2)))
+        assert queue.get() == (1,2)
+        assert queue.get() == (1,2)
+        with pytest.raises(Empty):
+            queue.get(block=False)
+    with pytest.raises(Empty):
+        queue.get(block=False)

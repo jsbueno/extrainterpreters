@@ -9,6 +9,7 @@ from textwrap import dedent as D
 
 from . import interpreters, BFSZ, running_interpreters
 
+
 _TTL = 0.01
 
 class BaseInterpreter:
@@ -24,7 +25,7 @@ class BaseInterpreter:
             raise RuntimeError("Interpreter already started")
         with self.lock:
             self.intno = self.id = interpreters.create()
-            running_interpreters.add(self)
+            running_interpreters[self.intno] = self
             self.thread = None
             self._create_channel()
             self._init_interpreter()
@@ -55,10 +56,7 @@ class BaseInterpreter:
                 raise  ## raised if interpreter is running. TBD: add a timeout mechanism
             self.intno = None
         self.thread = None
-        try:
-            running_interpreters.remove(self)
-        except KeyError:
-            pass
+        running_interpreters.pop(self.id, None)
 
     def __exit__(self, *args):
         return self.close(*args)
