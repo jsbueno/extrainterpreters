@@ -19,7 +19,7 @@ setuptools.setup(
     long_description=Path("README.md").read_text(),
     long_description_content_type="text/markdown",
     url="https://github.com/jsbueno/extrainterpreters",
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages(where="src"),
     ext_modules=memoryboard_module,
     package_dir={'': 'src'},
     classifiers=[
