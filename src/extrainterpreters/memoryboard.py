@@ -39,7 +39,7 @@ class RemoteDataState:
 
 TIME_RESOLUTION = 0.002
 DEFAULT_TIMEOUT = 50 * TIME_RESOLUTION
-DEFAULT_TTL = 1
+DEFAULT_TTL = 3600
 REMOTE_HEADER_SIZE = RemoteHeader._size
 
 
@@ -608,7 +608,7 @@ class LockableBoard:
             lock_ptr = self.map._data_for_remote()[0] + offset + 1
             if not _atomic_byte_lock(lock_ptr):
                 continue
-            if control.owner not in running_interpreters:
+            if control.owner not in interpreters.list_all():
                 # Counter consumed by queues: they have to fetch
                 # a byte on the notification pipe if an item
                 # vanished due to this.

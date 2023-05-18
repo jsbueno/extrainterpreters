@@ -78,3 +78,18 @@ class EISelector:
 
 # singleton:
 EISelector = EISelector()
+
+PIPE_REGISTRY = {}
+
+def register_pipe(keys, instance):
+    """Not for public use.
+
+    A registry so that a given Python object using process-wide resources
+    (like file descriptors) is effectivelly a "singleton" in the same interpreter
+    (each instance sharing the same file descriptors will also share the same
+    memory buffers)
+    """
+    PIPE_REGISTRY[keys] = instance
+    return keys
+
+

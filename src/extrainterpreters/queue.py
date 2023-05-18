@@ -13,11 +13,113 @@ from queue import Empty, Full  #  make these available to users
 from .utils import guard_internal_use, StructBase, Field, _InstMode, non_reentrant, ResourceBusyError
 from .memoryboard import LockableBoard, RemoteArray, RemoteState
 from . import interpreters
-from .resources import EISelector
+from .resources import EISelector, register_pipe, PIPE_REGISTRY
 
 
 
 _DEFAULT_BLOCKING_TIMEOUT = 5  #
+
+
+
+class _SimplexPipe:
+    """Wrapper around os.pipe
+
+    Will make use of the per-interpreter single Selector
+    """
+    # TBD: Refactor features common to "_DuplexPipe" (Pipe cls bellow)
+    def __init__(self):
+        self.reader_fd, self.writer_fd = register_pipe(os.pipe(), self)
+        self._post_init()
+        self._bound_interp = int(interpreters.get_current())
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        return state
+
+    @guard_internal_use
+    def __setstate__(self, state):
+        keys = state["reader_fd"], state["writer_fd"]
+        if keys in PIPE_REGISTRY:
+            state = PIPE_REGISTRY[keys].__dict__.copy()
+        else:
+            register_pipe(keys, self)
+        self.__dict__.update(state)
+        self._post_init()
+
+    def _post_init(self):
+        self.closed = False
+        EISelector.register(self.reader_fd, selectors.EVENT_READ, self._read_ready_callback)
+        EISelector.register(self.writer_fd, selectors.EVENT_WRITE, self._write_ready_callback)
+        self._read_ready_flag = False
+        self._write_ready_flag = False
+
+    def send(self, data):
+        if self.closed:
+            warnings.warn("Pipe already closed. No data sent")
+            return
+        os.write(self.writer_fd, data)
+
+    # alias
+    write = send
+
+    def read_blocking(self, amount=4096):
+        result = os.read(self.reader_fd, amount)
+        self._read_ready_flag = False
+        return result
+
+    def _read_ready_callback(self, key, *args):
+        self._read_ready_flag = True
+
+    def select(self, timeout=0):
+        # Think better on this:
+        self._read_ready_flag = False
+        # FIXME: shared singleton selector may return earlier than
+        # an event relevant for this instance, even if the timeout
+        # has not been reached.
+        # (we need to loop the select call while timeout not expired)
+        EISelector.select(timeout=timeout)
+        return self._read_ready_flag
+
+    def _write_ready_callback(self, *args):
+        self._write_ready_flag = True
+
+    def select_for_write(self, timeout=None):
+        self._write_ready_flag = False
+        EISelector.select(timeout=timeout)
+        return self._write_ready_flag
+
+    def readline(self):
+        # needed by pickle.load
+        result = []
+        read_byte = ...
+        while read_byte and read_byte != '\n':
+            result.append(read_byte:=self.read(1))
+        return b"".join(result)
+
+    def read(self, amount=4096, timeout=0):
+        if self.closed:
+            warnings.warn("Pipe already closed. Not trying to read anything")
+            return b""
+        result = b""
+        if self.select(timeout):
+            return self.read_blocking(amount)
+        return b""
+
+    def close(self):
+        # FIXME: embedd a shared buffer struct with a count of instances
+        # of the same pipe per interpreter. When the last interpreter
+        # calls  :close" (or __del__), close the fds
+        for fd in (self.reader_fd, self.writer_fd):
+            try:
+                pass
+                # os.close(fd)
+            except OSError:
+                pass
+        self.closed = True
+
+    def __del__(self):
+        self.close()
+
 
 class Pipe:
     """Full Duplex Pipe class.
@@ -143,7 +245,7 @@ class Pipe:
         self.close()
 
 
-class LockablePipe(Pipe):
+class LockableMixin:
     def __init__(self):
         # TBD: a "multiinterpreter lock" will likely be a wrapper over this patterh
         # use that as soon as it is done:
@@ -151,6 +253,17 @@ class LockablePipe(Pipe):
         self._lock_array.header.state = RemoteState.ready
         self.lock = self._lock_array._lock
         super().__init__()
+
+    def __setstate__(self, state):
+        result = super().__setstate__(state)
+        if self._lock_array._data is None:
+            self._lock_array.start()
+        return result
+
+class LockableSimplexPipe(LockableMixin, _SimplexPipe): pass
+
+class LockablePipe(LockableMixin, Pipe): pass
+
 
 
 def _parent_only(func):
@@ -337,8 +450,7 @@ class Queue(_ABSQueue):
     def __init__(self, size=None):
         self.size = size
         self._buffer = LockableBoard()
-        self._signal_pipe = LockablePipe()
-        self._data_pipe = LockablePipe()
+        self._signal_pipe = LockableSimplexPipe()
         self._parent_interp = int(interpreters.get_current())
         self._post_init()
 
@@ -371,11 +483,11 @@ class Queue(_ABSQueue):
     def _child_post_init(self):
         ...
 
-    def _fetch(self, origin_pipe):
+    def _fetch(self):
         """
         _inner function - must be called only from .get()
         """
-
+        origin_pipe = self._signal_pipe
         tmp = self._buffer.fetch_item()
         if not tmp:
             if self._buffer._items_closed_interpreters > 0:
@@ -389,25 +501,18 @@ class Queue(_ABSQueue):
         origin_pipe.read(1)
         _, obj = tmp
         self._data.append(obj)
-        #with self._data_pipe.lock:
-            #self._data_pipe.write(_QueueReturnOpcodes.ACK_ELEMENT.to_bytes(1, "little") + int(interpreters.get_current()).to_bytes(2, "little"))
 
     def get(self, block=True, timeout=None):
+        # FIXME: make timeout/block semantics equal to
+        # what exists for normal queues
+        # (a plain .get() should just block forever until there is data)
         if not block:
             timeout=0
         elif timeout is None:
             timeout = _DEFAULT_BLOCKING_TIMEOUT
 
-        origin_pipe = None
         if self._signal_pipe.select(timeout=timeout):
-            origin_pipe = self._signal_pipe
-        elif self._signal_pipe.counterpart.select(timeout=0):
-            # so that we can retrieve items post in this same interpreter.
-            # (an expected Queue behavior)
-            origin_pipe = self._signal_pipe.counterpart
-
-        if origin_pipe:
-            self._fetch(origin_pipe)
+            self._fetch()
 
         if self._data:
             return self._data.popleft()
