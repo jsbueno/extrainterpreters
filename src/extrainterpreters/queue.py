@@ -24,7 +24,9 @@ _DEFAULT_BLOCKING_TIMEOUT = 5  #
 class _SimplexPipe:
     """Wrapper around os.pipe
 
-    Will make use of the per-interpreter single Selector
+    makes use of the per-interpreter single Selector, and registry -
+    so that even if unpickled several times in the same interpreter
+    it still uses the same underlying resources.
     """
     # TBD: Refactor features common to "_DuplexPipe" (Pipe cls bellow)
     def __init__(self):
@@ -32,19 +34,32 @@ class _SimplexPipe:
         self._post_init()
         self._bound_interp = int(interpreters.get_current())
 
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        return state
+    @classmethod
+    def _unpickler(cls, reader_fd, writer_fd):
+        print("\nUooooinggaaa\n")
+        if (reader_fd, writer_fd) in PIPE_REGISTRY:
+            return PIPE_REGISTRY[reader_fd, writer_fd]
+        instance = cls.__new__(cls)
+        instance.reader_fd = reader_fd
+        instance.writer_fd = writer_fd
+        instance._new_in_interpreter = True
+        return instance
 
-    @guard_internal_use
+    def __reduce__(self):
+        return type(self)._unpickler, (self.reader_fd, self.writer_fd), self.__dict__.copy()
+
+    #def __getstate__(self):
+        #state = self.__dict__.copy()
+        #return state
+
+    #@guard_internal_use
     def __setstate__(self, state):
-        keys = state["reader_fd"], state["writer_fd"]
-        if keys in PIPE_REGISTRY:
-            state = PIPE_REGISTRY[keys].__dict__.copy()
-        else:
-            register_pipe(keys, self)
-        self.__dict__.update(state)
-        self._post_init()
+        if getattr(self, "_new_in_interpreter", False):
+            # initialize only on first unpickle in an interpreter
+            self.__dict__.update(state)
+            self._post_init()
+            register_pipe((self.reader_fd, self.writer_fd), self)
+        self._new_in_interpreter = False
 
     def _post_init(self):
         self.closed = False

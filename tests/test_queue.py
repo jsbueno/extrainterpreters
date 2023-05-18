@@ -19,6 +19,17 @@ def test_simplexpipe_works():
     yy.write(b"\x03\x04")
     assert xx.read(2) == (b"\x03\x04")
 
+def test_simplexpipe_unpickles_with_same_memory_buffer_main_intrepreter():
+    xx = LockableSimplexPipe()
+    yy = pickle.loads(pickle.dumps(xx))
+    assert xx is yy
+    del xx, yy
+    from extrainterpreters import resources
+    xx = LockableSimplexPipe()
+    # Force unregister:
+    del resources.PIPE_REGISTRY[xx.reader_fd, xx.writer_fd]
+    yy = pickle.loads(pickle.dumps(xx))
+    assert xx is not yy
 
 def test_simplexpipe_unpickles_with_same_memory_buffer_child_intrepreter():
     xx = LockableSimplexPipe()
@@ -27,25 +38,8 @@ def test_simplexpipe_unpickles_with_same_memory_buffer_child_intrepreter():
         interp.run_string(f"xx = pickle.loads({pickle.dumps(xx)})")
         interp.run_string(D(f"""\
             yy = pickle.loads(pickle.dumps(xx))
-            assert xx._lock_array is yy._lock_array
+            assert xx is yy
         """))
-
-
-
-def test_simplexpipe_unpickles_with_same_memory_buffer_main_intrepreter():
-    xx = LockableSimplexPipe()
-    yy = pickle.loads(pickle.dumps(xx))
-    assert xx._lock_array is yy._lock_array
-    del xx, yy
-    from extrainterpreters import resources
-    xx = LockableSimplexPipe()
-    # Force unregister:
-    del resources.PIPE_REGISTRY[xx.reader_fd, xx.writer_fd]
-    yy = pickle.loads(pickle.dumps(xx))
-    assert xx._lock_array is not yy._lock_array
-
-
-
 
 def test_pipe_is_unpickled_as_counterpart_and_comunicates(lowlevel):
     interp = Interpreter().start()
