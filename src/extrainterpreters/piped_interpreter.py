@@ -41,8 +41,8 @@ class FuncData(StructBase):
 def _dispatcher(pipe, buffer):
     """the core running function in a PipedInterpreter
 
-    This is responsible for watching comunications with the parent
-    interpreter, dispathing execution, and place the return values
+    This is responsible for watching communications with the parent
+    interpreter, dispatching execution, and place the return values
     """
 
     while True:
@@ -113,6 +113,3 @@ class PipedInterpreter(_BufferedInterpreter):
             self.pipe.read(timeout=None)
             self.pipe.close()
         super()._close_channel()
-
-
-

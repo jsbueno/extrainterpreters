@@ -114,9 +114,9 @@ class SimpleInterpreter(_BufferedInterpreter):
     This implementation uses a memory area  (by default of 10MB), to send pickled objects back and fort at fixed offsets.
     """
 
-    def __init__(self, target=None, args=(), kwargs=None):
+    def __init__(self, name=None, target=None, args=(), kwargs=None):
         kwargs = kwargs or {}
-        super().__init__()
+        super().__init__(name=name)
         self.target = target
         self._args = args
         self._kwargs = kwargs
