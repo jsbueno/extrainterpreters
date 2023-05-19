@@ -35,7 +35,7 @@ running_interpreters[0] = RootInterpProxy
 from .utils import ResourceBusyError
 from .memoryboard import ProcessBuffer, RemoteArray
 from .base_interpreter import BaseInterpreter
-from .queue import Pipe, LockablePipe, SingleQueue, Queue
+from .queue import SingleQueue, Queue
 from .simple_interpreter import SimpleInterpreter as Interpreter
 
 

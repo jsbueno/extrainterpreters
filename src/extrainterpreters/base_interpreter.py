@@ -162,15 +162,15 @@ class BaseInterpreter:
         return interpreters.run_string(self.intno, code)
 
 
-    def is_running(self):
-        """Proxies interpreters.is_running
+    #  currently not working. will raise when the interpreter is destroyed:
+    #def is_running(self):
+        #"""Proxies interpreters.is_running
 
-        Can be used instead of "done" to check if work
-        in a threaded call has ended.
-        """
-        with self.lock:
-            return interpreters.is_running(self.intno)
-    del is_running # : currently not working. will raise when the interpreter is destroyed.
+        #Can be used instead of "done" to check if work
+        #in a threaded call has ended.
+        #"""
+        #with self.lock:
+            #return interpreters.is_running(self.intno)
 
     def result(self):
         raise NotImplementedError()

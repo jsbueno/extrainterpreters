@@ -1,18 +1,20 @@
 import pickle
 import threading
 import time
+import os
 from textwrap import dedent as D
 
 
 import extrainterpreters as ei
-from extrainterpreters import Pipe, SingleQueue, Queue, LockablePipe
+from extrainterpreters import SingleQueue, Queue
 from extrainterpreters import Interpreter
-from extrainterpreters.queue import Empty,  LockableSimplexPipe
+from extrainterpreters.queue import Empty,  _SimplexPipe, _DuplexPipe
+from extrainterpreters import resources
 
 import pytest
 
 def test_simplexpipe_works():
-    xx = LockableSimplexPipe()
+    xx = _SimplexPipe()
     yy = pickle.loads(pickle.dumps(xx))
     xx.write(b"\x01\x02")
     assert yy.read(2) == (b"\x01\x02")
@@ -20,19 +22,19 @@ def test_simplexpipe_works():
     assert xx.read(2) == (b"\x03\x04")
 
 def test_simplexpipe_unpickles_with_same_memory_buffer_main_intrepreter():
-    xx = LockableSimplexPipe()
+    xx = _SimplexPipe()
     yy = pickle.loads(pickle.dumps(xx))
     assert xx is yy
     del xx, yy
-    from extrainterpreters import resources
-    xx = LockableSimplexPipe()
+
+    xx = _SimplexPipe()
     # Force unregister:
     del resources.PIPE_REGISTRY[xx.reader_fd, xx.writer_fd]
     yy = pickle.loads(pickle.dumps(xx))
     assert xx is not yy
 
 def test_simplexpipe_unpickles_with_same_memory_buffer_child_intrepreter():
-    xx = LockableSimplexPipe()
+    xx = _SimplexPipe()
     with ei.Interpreter() as interp:
         interp.run_string("import extrainterpreters as ei; ei.DEBUG=True")
         interp.run_string(f"xx = pickle.loads({pickle.dumps(xx)})")
@@ -41,10 +43,27 @@ def test_simplexpipe_unpickles_with_same_memory_buffer_child_intrepreter():
             assert xx is yy
         """))
 
-def test_pipe_is_unpickled_as_counterpart_and_comunicates(lowlevel):
+@pytest.mark.skip
+def test_simplexpipe_closes_fds_on_exit():
+    xx = _SimplexPipe()
+    fds = xx.reader_fd, xx.writer_fd
+    xx.__del__()  # `del xx` doesn't cut it.
+    for fd, method, arg in zip(fds, (os.read, os.write), (0, b"\x00")):
+        with pytest.raises(OSError):
+            try:
+                print("\n\n", method, fd, arg, "\n")
+                method(fd, arg)
+            except OSError as oserror:
+                assert oserror.args[0] == 9  # "Bad file descriptor" indicating the file  is closed
+                raise
+
+def test_simplexpipe_doesnotclose_when_open_in_other_interpreter():
+    ...
+
+def test_duplexpipe_is_unpickled_as_counterpart_and_comunicates(lowlevel):
     interp = Interpreter().start()
     interp.run_string("import pickle")
-    aa = Pipe()
+    aa = _DuplexPipe()
     interp.run_string("import extrainterpreters; extrainterpreters.DEBUG = True")
     interp.run_string(f"bb = pickle.loads({pickle.dumps(aa)})")
     aa.send(b"01234")
@@ -53,10 +72,10 @@ def test_pipe_is_unpickled_as_counterpart_and_comunicates(lowlevel):
     assert aa.read() == b"12345"
     interp.close()
 
-def test_locacklepipe_locks(lowlevel):
+def test_locackle_duplexpipe_locks(lowlevel):
     interp = Interpreter().start()
     interp.run_string("import pickle")
-    aa = LockablePipe()
+    aa = _DuplexPipe()
     interp.run_string("import extrainterpreters; extrainterpreters.DEBUG = True")
     interp.run_string(f"bb = pickle.loads({pickle.dumps(aa)})")
     interp.run_string("bb.lock.__enter__()")
@@ -65,7 +84,6 @@ def test_locacklepipe_locks(lowlevel):
     interp.run_string("bb.lock.__exit__()")
     assert aa.lock._timeout == aa.lock._original_timeout
     aa.lock.__enter__()
-
 
 
 def test_singlequeue_is_unpickled_as_counterpart_and_comunicates(lowlevel):

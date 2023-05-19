@@ -326,8 +326,9 @@ class RemoteArray:
                 self.header.state = RemoteState.serialized
         state = {"buffer_data": _address_and_size(self._data)}
         state["ttl"] = self._ttl
-        if not hasattr(self, "_timestamp"):
-            self._timestamp = time.monotonic()
+        #if not hasattr(self, "_timestamp"):
+            #self._timestamp = time.monotonic()
+        self._timestamp = time.monotonic()
         state["timestamp"] = self._timestamp
         state["_lock"] = self._lock
         return state

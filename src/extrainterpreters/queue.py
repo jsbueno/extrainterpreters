@@ -16,12 +16,96 @@ from . import interpreters
 from .resources import EISelector, register_pipe, PIPE_REGISTRY
 
 
-
 _DEFAULT_BLOCKING_TIMEOUT = 5  #
 
 
+class LockableMixin:
+    def __init__(self):
+        # TBD: a "multiinterpreter lock" will likely be a wrapper over this patterh
+        # use that as soon as it is done:
+        self._lock_array = RemoteArray(size=0)
+        self._lock_array.header.state = RemoteState.ready
+        self.lock = self._lock_array._lock
+        super().__init__()
 
-class _SimplexPipe:
+    def _post_setstate(self, state):
+        if self._lock_array._data is None:
+            self._lock_array.start()
+        return self
+
+class _PipeBase:
+    def readline(self):
+        # needed by pickle.load
+        result = []
+        read_byte = ...
+        while read_byte and read_byte != '\n':
+            result.append(read_byte:=self.read(1))
+        return b"".join(result)
+
+    def _read_ready_callback(self, key, *args):
+        self._read_ready_flag = True
+
+    def select(self, timeout=0):
+        # Think better on this:
+        self._read_ready_flag = False
+        EISelector.select(timeout=timeout)
+        self._read_ready_flag
+        return self._read_ready_flag
+
+    def _write_ready_callback(self, *args):
+        self._write_ready_flag = True
+
+    def select_for_write(self, timeout=None):
+        self._write_ready_flag = False
+        EISelector.select(timeout=timeout)
+        return self._write_ready_flag
+
+    def send(self, data, timeout=None):
+        if self.closed:
+            warnings.warn("Pipe already closed. No data sent")
+            return
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        if self.select_for_write(timeout):
+            return os.write(self.writer_fd, data)
+
+        raise TimeoutError("FD not ready for writting - Pipe full")
+    write = send
+
+    def read_blocking(self, amount=4096):
+        result = os.read(self.reader_fd, amount)
+        return result
+
+    def read(self, amount=4096, timeout=0):
+        if self.closed:
+            warnings.warn("Pipe already closed. Not trying to read anything")
+            return b""
+        result = b""
+        if self.select(timeout):
+            return self.read_blocking(amount)
+        return b""
+
+
+    def close(self):
+        # FIXME: embedd a shared buffer struct with a count of instances
+        # of the same pipe per interpreter. When the last interpreter
+        # calls  :close" (or __del__), close the fds
+        for fd in getattr(self, "_all_fds", ()):
+            try:
+                pass
+                # os.close(fd)
+            except OSError:
+                pass
+        self.closed = True
+        self._all_fds = ()
+
+    def __del__(self):
+        self.close()
+
+
+
+
+class _SimplexPipe(LockableMixin, _PipeBase):
     """Wrapper around os.pipe
 
     makes use of the per-interpreter single Selector, and registry -
@@ -30,13 +114,13 @@ class _SimplexPipe:
     """
     # TBD: Refactor features common to "_DuplexPipe" (Pipe cls bellow)
     def __init__(self):
-        self.reader_fd, self.writer_fd = register_pipe(os.pipe(), self)
+        self.reader_fd, self.writer_fd = self._all_fds = register_pipe(os.pipe(), self)
         self._post_init()
         self._bound_interp = int(interpreters.get_current())
+        super().__init__()
 
     @classmethod
     def _unpickler(cls, reader_fd, writer_fd):
-        print("\nUooooinggaaa\n")
         if (reader_fd, writer_fd) in PIPE_REGISTRY:
             return PIPE_REGISTRY[reader_fd, writer_fd]
         instance = cls.__new__(cls)
@@ -48,16 +132,14 @@ class _SimplexPipe:
     def __reduce__(self):
         return type(self)._unpickler, (self.reader_fd, self.writer_fd), self.__dict__.copy()
 
-    #def __getstate__(self):
-        #state = self.__dict__.copy()
-        #return state
-
     #@guard_internal_use
     def __setstate__(self, state):
         if getattr(self, "_new_in_interpreter", False):
             # initialize only on first unpickle in an interpreter
             self.__dict__.update(state)
             self._post_init()
+            if hasattr(self, "_post_setstate"):
+                self._post_setstate(state)
             register_pipe((self.reader_fd, self.writer_fd), self)
         self._new_in_interpreter = False
 
@@ -68,83 +150,22 @@ class _SimplexPipe:
         self._read_ready_flag = False
         self._write_ready_flag = False
 
-    def send(self, data):
-        if self.closed:
-            warnings.warn("Pipe already closed. No data sent")
-            return
-        os.write(self.writer_fd, data)
-
-    # alias
-    write = send
-
-    def read_blocking(self, amount=4096):
-        result = os.read(self.reader_fd, amount)
-        self._read_ready_flag = False
-        return result
-
-    def _read_ready_callback(self, key, *args):
-        self._read_ready_flag = True
-
-    def select(self, timeout=0):
-        # Think better on this:
-        self._read_ready_flag = False
-        # FIXME: shared singleton selector may return earlier than
-        # an event relevant for this instance, even if the timeout
-        # has not been reached.
-        # (we need to loop the select call while timeout not expired)
-        EISelector.select(timeout=timeout)
-        return self._read_ready_flag
-
-    def _write_ready_callback(self, *args):
-        self._write_ready_flag = True
-
-    def select_for_write(self, timeout=None):
-        self._write_ready_flag = False
-        EISelector.select(timeout=timeout)
-        return self._write_ready_flag
-
-    def readline(self):
-        # needed by pickle.load
-        result = []
-        read_byte = ...
-        while read_byte and read_byte != '\n':
-            result.append(read_byte:=self.read(1))
-        return b"".join(result)
-
-    def read(self, amount=4096, timeout=0):
-        if self.closed:
-            warnings.warn("Pipe already closed. Not trying to read anything")
-            return b""
-        result = b""
-        if self.select(timeout):
-            return self.read_blocking(amount)
-        return b""
-
-    def close(self):
-        # FIXME: embedd a shared buffer struct with a count of instances
-        # of the same pipe per interpreter. When the last interpreter
-        # calls  :close" (or __del__), close the fds
-        for fd in (self.reader_fd, self.writer_fd):
-            try:
-                pass
-                # os.close(fd)
-            except OSError:
-                pass
-        self.closed = True
-
-    def __del__(self):
-        self.close()
 
 
-class Pipe:
+class _DuplexPipe(LockableMixin, _PipeBase):
     """Full Duplex Pipe class.
+
+    # warning - not sure if this will be kept in the API at all.
+    # do not rely on it
     """
     def __init__(self):
         self.originator_fds = os.pipe()
         self.counterpart_fds = os.pipe()
+
         self._all_fds = self.originator_fds + self.counterpart_fds
         self._post_init()
         self._bound_interp = int(interpreters.get_current())
+        super().__init__()
 
     # These guys are cute!
     # A Pipe unpickled in another interpreter
@@ -163,8 +184,12 @@ class Pipe:
             # reverse the direction in child intrepreter
             self.__dict__.update(self.counterpart.__dict__)
         self._post_init()
+        if hasattr(self, "_post_setstate"):
+            self._post_setstate(state)
 
     def _post_init(self):
+        self.writer_fd = self.originator_fds[1]
+        self.reader_fd = self.counterpart_fds[0]
         self.closed = False
         EISelector.register(self.counterpart_fds[0], selectors.EVENT_READ, self._read_ready_callback)
         EISelector.register(self.originator_fds[1], selectors.EVENT_WRITE, self._write_ready_callback)
@@ -191,94 +216,6 @@ class Pipe:
         new_inst._post_init()
         self._counterpart = new_inst
         return new_inst
-
-    def send(self, data):
-        if self.closed:
-            warnings.warn("Pipe already closed. No data sent")
-            return
-        if isinstance(data, str):
-            data = data.encode("utf-8")
-        os.write(self.originator_fds[1], data)
-
-    # alias
-    write = send
-
-    def read_blocking(self, amount=4096):
-        result = os.read(self.counterpart_fds[0], amount)
-        self._read_ready_flag = False
-        return result
-
-    def _read_ready_callback(self, key, *args):
-        self._read_ready_flag = True
-
-    def _read_ready(self, timeout=0):
-        # Think better on this:
-        self._read_ready_flag = False
-        EISelector.select(timeout=timeout)
-        self._read_ready_flag
-        return self._read_ready_flag
-
-    select = _read_ready
-        #if len(events) == 1 and events[0][0].fd == self.counterpart_fds[0]:
-            #return True
-        #return False
-    def _write_ready_callback(self, *args):
-        self._write_ready_flag = True
-
-    def select_for_write(self, timeout=None):
-        self._write_ready_flag = False
-        EISelector.select(timeout=timeout)
-        return self._write_ready_flag
-
-    def readline(self):
-        # needed by pickle.load
-        result = []
-        read_byte = ...
-        while read_byte and read_byte != '\n':
-            result.append(read_byte:=self.read(1))
-        return b"".join(result)
-
-    def read(self, amount=4096, timeout=0):
-        if self.closed:
-            warnings.warn("Pipe already closed. Not trying to read anything")
-            return b""
-        result = b""
-        if self._read_ready(timeout):
-            return self.read_blocking(amount)
-        return b""
-
-    def close(self):
-        for fd in getattr(self, "_all_fds", ()):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        self.closed = True
-        self._all_fds = ()
-
-    def __del__(self):
-        self.close()
-
-
-class LockableMixin:
-    def __init__(self):
-        # TBD: a "multiinterpreter lock" will likely be a wrapper over this patterh
-        # use that as soon as it is done:
-        self._lock_array = RemoteArray(size=0)
-        self._lock_array.header.state = RemoteState.ready
-        self.lock = self._lock_array._lock
-        super().__init__()
-
-    def __setstate__(self, state):
-        result = super().__setstate__(state)
-        if self._lock_array._data is None:
-            self._lock_array.start()
-        return result
-
-class LockableSimplexPipe(LockableMixin, _SimplexPipe): pass
-
-class LockablePipe(LockableMixin, Pipe): pass
-
 
 
 def _parent_only(func):
@@ -323,7 +260,7 @@ class SingleQueue(_ABSQueue):
     def __init__(self, maxsize=0):
         from . import interpreters
         self.maxsize = maxsize
-        self.pipe = Pipe()
+        self.pipe = _DuplexPipe()
         self.mode = _InstMode.parent
         self.bound_to_interp = int(interpreters.get_current())
         self._size = 0
@@ -465,7 +402,7 @@ class Queue(_ABSQueue):
     def __init__(self, size=None):
         self.size = size
         self._buffer = LockableBoard()
-        self._signal_pipe = LockableSimplexPipe()
+        self._signal_pipe = _SimplexPipe()
         self._parent_interp = int(interpreters.get_current())
         self._post_init()
 
