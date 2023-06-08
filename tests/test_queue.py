@@ -43,22 +43,59 @@ def test_simplexpipe_unpickles_with_same_memory_buffer_child_intrepreter():
             assert xx is yy
         """))
 
-@pytest.mark.skip
+
+def test_simplexpipe_file_registers_unregister_from_global_selector():
+    xx = _SimplexPipe()
+    fds = xx.reader_fd, xx.writer_fd
+    assert fds in resources.PIPE_REGISTRY
+    for fd in fds:
+        assert resources.EISelector.selector.get_key(fd)
+    xx.close()
+    assert fds not in resources.PIPE_REGISTRY
+    for fd in fds:
+        with pytest.raises(KeyError):
+            resources.EISelector.selector.get_key(fd)
+
+
 def test_simplexpipe_closes_fds_on_exit():
     xx = _SimplexPipe()
     fds = xx.reader_fd, xx.writer_fd
-    xx.__del__()  # `del xx` doesn't cut it.
+    xx.__del__()  # `del xx` doesn't cut it. I hope it is due to references kept by pytest.
     for fd, method, arg in zip(fds, (os.read, os.write), (0, b"\x00")):
         with pytest.raises(OSError):
             try:
-                print("\n\n", method, fd, arg, "\n")
                 method(fd, arg)
             except OSError as oserror:
                 assert oserror.args[0] == 9  # "Bad file descriptor" indicating the file  is closed
                 raise
 
 def test_simplexpipe_doesnotclose_when_open_in_other_interpreter():
-    ...
+    TOTAL = 5
+    aa = _SimplexPipe()
+    interps = []
+    code = D(f"""\
+        import extrainterpreters; extrainterpreters.DEBUG = True
+        aa = pickle.loads({pickle.dumps(aa)})
+    """)
+    for i in range(TOTAL):
+        interp = Interpreter().start()
+        interp.run_string(code)
+        interps.append(interp)
+    fd = aa.writer_fd
+    assert os.write(fd, b"") == 0
+    assert aa.active.counter == TOTAL + 1
+
+    for interp in interps[:-1]:
+        interp.run_string("aa.close()")
+    assert os.write(fd, b"") == 0
+    assert aa.active.counter == 2
+    aa.close()
+    assert os.write(fd, b"") == 0
+    assert aa.active.counter == 1
+    interps[-1].run_string("aa.close()")
+    assert aa.active.counter == 0
+    with pytest.raises(OSError):
+        os.write(fd, b"")
 
 def test_duplexpipe_is_unpickled_as_counterpart_and_comunicates(lowlevel):
     interp = Interpreter().start()
@@ -71,6 +108,7 @@ def test_duplexpipe_is_unpickled_as_counterpart_and_comunicates(lowlevel):
     interp.run_string("bb.send(cc)")
     assert aa.read() == b"12345"
     interp.close()
+
 
 def test_locackle_duplexpipe_locks(lowlevel):
     interp = Interpreter().start()

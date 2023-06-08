@@ -49,7 +49,7 @@ def list_all():
 
 
 def destroy_dangling_interpreters():
-    for interp in running_interpreters.values():
+    for interp in list(running_interpreters.values()):
         if interp is RootInterpProxy:
             continue
         try:

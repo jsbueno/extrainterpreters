@@ -16,24 +16,35 @@ from . import interpreters
 from .resources import EISelector, register_pipe, PIPE_REGISTRY
 
 
+#TBD: Fix blocking/timeout semantics
+# (default for timeout=None should be "wait forever" everywhere)
 _DEFAULT_BLOCKING_TIMEOUT = 5  #
 
+class ActiveInstance(StructBase):
+    counter = Field(2)
 
-class LockableMixin:
+
+class _PipeBase:
+    #class LockableMixin:
     def __init__(self):
         # TBD: a "multiinterpreter lock" will likely be a wrapper over this patterh
         # use that as soon as it is done:
-        self._lock_array = RemoteArray(size=0)
+        self._lock_array = RemoteArray(size=ActiveInstance._size)
         self._lock_array.header.state = RemoteState.ready
-        self.lock = self._lock_array._lock
         super().__init__()
 
-    def _post_setstate(self, state):
+    @property
+    def active(self):
+        return ActiveInstance._from_data(self._lock_array, 0)
+
+
+    def _post_init(self):
         if self._lock_array._data is None:
             self._lock_array.start()
-        return self
+        self.lock = self._lock_array._lock
+        with self.lock:
+            self.active.counter += 1
 
-class _PipeBase:
     def readline(self):
         # needed by pickle.load
         result = []
@@ -85,27 +96,41 @@ class _PipeBase:
             return self.read_blocking(amount)
         return b""
 
-
     def close(self):
         # FIXME: embedd a shared buffer struct with a count of instances
         # of the same pipe per interpreter. When the last interpreter
         # calls  :close" (or __del__), close the fds
-        for fd in getattr(self, "_all_fds", ()):
-            try:
-                pass
-                # os.close(fd)
-            except OSError:
-                pass
+        if getattr(self, "lock", None):
+            with self.lock:
+                all_fds = getattr(self, "_all_fds", ())
+                for fd in all_fds:
+                    try:
+                        EISelector.unregister(fd)
+                    except KeyError:
+                        pass
+                if all_fds in PIPE_REGISTRY:
+                    del PIPE_REGISTRY[self._all_fds]
+                # Close file descriptors if this was the last
+                # interpreter where they are open:
+                if self.active.counter:
+                    self.active.counter -= 1
+                if self.active.counter == 0:
+                    for fd in getattr(self, "_all_fds", ()):
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
         self.closed = True
         self._all_fds = ()
+        self.reader_fd = None
+        self.writer_fd = None
 
     def __del__(self):
-        self.close()
+        if not getattr(self, "closed", False):
+            self.close()
 
 
-
-
-class _SimplexPipe(LockableMixin, _PipeBase):
+class _SimplexPipe(_PipeBase):
     """Wrapper around os.pipe
 
     makes use of the per-interpreter single Selector, and registry -
@@ -115,9 +140,9 @@ class _SimplexPipe(LockableMixin, _PipeBase):
     # TBD: Refactor features common to "_DuplexPipe" (Pipe cls bellow)
     def __init__(self):
         self.reader_fd, self.writer_fd = self._all_fds = register_pipe(os.pipe(), self)
+        super().__init__()
         self._post_init()
         self._bound_interp = int(interpreters.get_current())
-        super().__init__()
 
     @classmethod
     def _unpickler(cls, reader_fd, writer_fd):
@@ -149,10 +174,11 @@ class _SimplexPipe(LockableMixin, _PipeBase):
         EISelector.register(self.writer_fd, selectors.EVENT_WRITE, self._write_ready_callback)
         self._read_ready_flag = False
         self._write_ready_flag = False
+        super()._post_init()
 
 
 
-class _DuplexPipe(LockableMixin, _PipeBase):
+class _DuplexPipe(_PipeBase):
     """Full Duplex Pipe class.
 
     # warning - not sure if this will be kept in the API at all.
@@ -161,11 +187,11 @@ class _DuplexPipe(LockableMixin, _PipeBase):
     def __init__(self):
         self.originator_fds = os.pipe()
         self.counterpart_fds = os.pipe()
+        super().__init__()
 
         self._all_fds = self.originator_fds + self.counterpart_fds
         self._post_init()
         self._bound_interp = int(interpreters.get_current())
-        super().__init__()
 
     # These guys are cute!
     # A Pipe unpickled in another interpreter
@@ -182,7 +208,7 @@ class _DuplexPipe(LockableMixin, _PipeBase):
         self.__dict__.update(state)
         if current != state["_bound_interp"]:
             # reverse the direction in child intrepreter
-            self.__dict__.update(self.counterpart.__dict__)
+            self.originator_fds, self.counterpart_fds = self.counterpart_fds, self.originator_fds
         self._post_init()
         if hasattr(self, "_post_setstate"):
             self._post_setstate(state)
@@ -195,24 +221,19 @@ class _DuplexPipe(LockableMixin, _PipeBase):
         EISelector.register(self.originator_fds[1], selectors.EVENT_WRITE, self._write_ready_callback)
         self._read_ready_flag = False
         self._write_ready_flag = False
-
-    @classmethod
-    def counterpart_from_fds(cls, originator_fds, counterpart_fds):
-        self = cls.__new__(cls)
-        self.originator_fds = originator_fds
-        self.counterpart_fds = counterpart_fds
-        self._all_fds = ()
-        self._post_init()
-        return self.counterpart
+        super()._post_init()
 
     @property
     def counterpart(self):
         if hasattr(self, "_counterpart"):
             return self._counterpart
-        new_inst = type(self).__new__(type(self))
-        new_inst.originator_fds = self.counterpart_fds
-        new_inst.counterpart_fds = self.originator_fds
+        cls = type(self)
+        new_inst = cls.__new__(type(self))
+        new_inst.originator_fds = self.originator_fds
+        new_inst.counterpart_fds = self.counterpart_fds
         new_inst._all_fds = ()
+        new_inst._lock_array = self._lock_array
+        new_inst.lock = self.lock
         new_inst._post_init()
         self._counterpart = new_inst
         return new_inst
@@ -258,7 +279,6 @@ class SingleQueue(_ABSQueue):
     mode = _InstMode.parent
     @_parent_only
     def __init__(self, maxsize=0):
-        from . import interpreters
         self.maxsize = maxsize
         self.pipe = _DuplexPipe()
         self.mode = _InstMode.parent

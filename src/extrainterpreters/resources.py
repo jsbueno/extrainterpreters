@@ -2,6 +2,7 @@ from selectors import DefaultSelector
 from types import MethodType
 import warnings
 
+from weakref import WeakValueDictionary
 from datetime import datetime
 
 
@@ -79,7 +80,7 @@ class EISelector:
 # singleton:
 EISelector = EISelector()
 
-PIPE_REGISTRY = {}
+PIPE_REGISTRY = WeakValueDictionary()
 
 def register_pipe(keys, instance):
     """Not for public use.

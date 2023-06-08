@@ -1,3 +1,4 @@
+
 import sys
 import pickle
 import weakref
@@ -73,6 +74,17 @@ def _dispatcher(pipe, buffer):
 
 
 class PipedInterpreter(_BufferedInterpreter):
+    """
+        This code is unused - and will probably remain so.
+
+
+        A single interpreter type is to be used - aditional
+        subinterpreter capabilities, like being a member
+        of a worker-pool will be added by calling aditional
+        methods on it
+    """
+
+
 
     def _interp_init_code(self):
         code = super()._interp_init_code()
@@ -80,7 +92,7 @@ class PipedInterpreter(_BufferedInterpreter):
             import extrainterpreters
             import threading
 
-            pipe = extrainterpreters.Pipe.counterpart_from_fds({self.pipe.originator_fds}, {self.pipe.counterpart_fds})
+            # pipe = extrainterpreters.Pipe.counterpart_from_fds({self.pipe.originator_fds}, {self.pipe.counterpart_fds})
             disp_thread = threading.Thread(target=extrainterpreters.piped_interpreter._dispatcher, args=(pipe, _m))
             disp_thread.start()
         """)

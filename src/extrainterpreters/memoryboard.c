@@ -90,10 +90,26 @@ static PyObject *_atomic_byte_loc(PyObject *self, PyObject *args)
     Py_RETURN_FALSE;
 }
 
+static PyObject *_object_from_id(PyObject *self, PyObject *args)
+{
+    Py_ssize_t address;
+    PyObject *obj;
+
+    if (!PyArg_ParseTuple(args, "n", &address)) {
+        return NULL;
+    }
+
+    obj = (PyObject *) address;
+    Py_INCREF(obj);
+
+    return obj;
+}
+
 static PyMethodDef _memoryboard_methods[] = {
     {"_remote_memory", _memoryboard_remote_memory, METH_VARARGS, _memoryboard_remote_memory_doc},
     {"_address_and_size", _memoryboard_get_address_and_size, METH_VARARGS, _memoryboard_get_address_and_size_doc},
     {"_atomic_byte_lock", _atomic_byte_loc, METH_VARARGS, _atomic_byte_loc_doc},
+    {"_object_from_id", _object_from_id, METH_VARARGS, "Swift death. Do not use."},
     {NULL, NULL, 0, NULL}
 };
 
