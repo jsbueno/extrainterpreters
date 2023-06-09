@@ -4,4 +4,5 @@
 *swp
 .eggs
 build/
-
+*.py[co]
+[.]venv/ 
