@@ -14,10 +14,11 @@ _TTL = 0.01
 
 class BaseInterpreter:
 
-    def __init__(self):
+    def __init__(self, name=None):
         # .intno and .id are both set to the interpreter id,
         # but .intno is set to None when the interpreter is closed.
         self.intno = self.id = None
+        self.name = name
         self.lock = threading.RLock()
 
     def start(self):
@@ -25,6 +26,7 @@ class BaseInterpreter:
             raise RuntimeError("Interpreter already started")
         with self.lock:
             self.intno = self.id = interpreters.create()
+            self.name = self.name or f"Subinterpreter #{self.intno}"
             running_interpreters[self.intno] = self
             self.thread = None
             self._create_channel()
@@ -44,11 +46,11 @@ class BaseInterpreter:
             try:
                 while time.monotonic() - self._started_at < _TTL:
                     # subinterpreters need sometime to stabilize.
-                    # shutting then imediatelly may lead to a segfault.
+                    # shutting then immediately may lead to a segfault.
                     time.sleep(0.002)
                 if interpreters.is_running(self.intno):
                     # TBD: close on "at exit"
-                    # # but really, just enduser code running with "run_string΅ on other thread should
+                    # # but really, just end user code running with "run_string" on other thread should
                     # leave the sub-interpreter on this state.
                     return
                 interpreters.destroy(self.intno)
