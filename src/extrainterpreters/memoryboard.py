@@ -589,7 +589,7 @@ class LockableBoard:
                     continue
                 # we are the now sole owners of the block.
                 block = BlockLock._from_data(self.map, offset)
-                block.onwer = id_
+                block.owner = id_
                 block.state = State.building
                 break
         else:
