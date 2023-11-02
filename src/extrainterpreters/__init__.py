@@ -58,7 +58,7 @@ def destroy_dangling_interpreters():
             import warnings
             warnings.warn(D(f"""\
                 Failed to close dangling {interp}. Data exchange file
-                {interp.buffer.fname} may not have been erased: {error}
+                {interp.buffer} may not have been erased: {error}
                 """))
         else:
             print(f"{interp} closed at main interpreter exit", file=sys.stderr)

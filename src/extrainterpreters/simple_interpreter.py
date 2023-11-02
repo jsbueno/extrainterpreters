@@ -63,6 +63,8 @@ class _BufferedInterpreter(BaseInterpreter):
     def done(self):
         if self.exception or hasattr(self, "_cached_result"):
             return True
+        if not self.map:
+            return False
         return self.map[self.buffer.nranges["return_data"]] != 0
 
     def result(self):

@@ -639,7 +639,7 @@ class LockableBoard:
     # to iter with len + getitem will yield incorrect results.
 
     def close(self):
-        if self.map:
+        if hasattr(self, "map") and self.map:
             self.map.close()
             self.map = None
 
