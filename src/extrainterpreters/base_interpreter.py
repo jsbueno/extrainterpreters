@@ -42,7 +42,7 @@ class BaseInterpreter:
         with self.lock:
             self._close_channel()
             try:
-                while time.monotonic() - self._started_at < _TTL:
+                while time.monotonic() - self._started_at < 10 * _TTL:
                     # subinterpreters need sometime to stabilize.
                     # shutting then imediatelly may lead to a segfault.
                     time.sleep(0.002)

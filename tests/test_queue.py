@@ -180,7 +180,7 @@ def test_queue_sent_to_other_interpreter():
 
 
 def test_queue_each_value_is_read_in_a_single_interpreter():
-
+    # FIXME: this is failing IRL : this test is not deterministic (neither are queue values read in a single interpreter by now)
     queue = q = Queue()
     q_pickle = pickle.dumps(q)
     q.put((1, 2))
@@ -300,3 +300,71 @@ def test_queue_subinterpreters_can_exchange_data():
         interp1.run_string("assert queue.get() == (3,4)")
         interp1.run_string("queue.put((5,6))")
         interp1.run_string("assert queue.get() == (5,6)")
+
+
+def test_queue_get_is_blocking_by_default_same_interpreter():
+    delay = 0.05
+    q = Queue()
+    def source():
+        time.sleep(delay)
+        q.put("element")
+    def sink():
+        nonlocal failed
+        start_time = time.monotonic()
+        try:
+            assert q.get() == "element"
+            assert (time.monotonic() - start_time()) > delay * 0.95
+        except Exception as error:
+            failed = error
+    failed = False
+    t1 = threading.Thread(target=source)
+    t2 = threading.Thread(target=sink)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    assert not failed, failed
+
+def test_queue_get_is_blocking_by_default_other_interpreter():
+    delay = 0.05
+    q_send = Queue()
+    q_response = Queue()
+    q_send_pickle = pickle.dumps(q_send)
+    q_response_pickle = pickle.dumps(q_response)
+    failed = False
+    interp1 = ei.Interpreter()
+    interp2 = ei.Interpreter()
+    with interp1, interp2:
+        for interp in (interp1, interp2):
+            interp.run_string(D(f"""\
+                import extrainterpreters; extrainterpreters.DEBUG=1
+                import time, threading, pickle
+                q_send = pickle.loads({q_send_pickle})
+                q_response = pickle.loads({q_response_pickle})
+                """))
+        interp1.run_string(D(f"""\
+            def source():
+                time.sleep({delay})
+                q_send.put("element")
+            t = threading.Thread(target=source)
+            t.start()
+            """))
+        interp2.run_string(D(f"""\
+            def sink():
+                failed = "" # str with False value for assertion
+                start_time = time.monotonic()
+                try:
+                    assert q_send.get() == "element"
+                    assert (time.monotonic() - start_time()) > {delay} * 0.95
+                except Exception as error:
+                    failed = error
+                q_response.put(str(failed)) # the error name is enough
+            t = threading.Thread(target=sink)
+            t.start()
+            """))
+        failed = q_response.get()
+        for interp in (interp1, interp2):
+            interp.run_string(D(f"""\
+                t.join()
+                """))
+    assert not failed, failed
