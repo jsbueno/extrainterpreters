@@ -313,7 +313,7 @@ def test_queue_get_is_blocking_by_default_same_interpreter():
         start_time = time.monotonic()
         try:
             assert q.get() == "element"
-            assert (time.monotonic() - start_time()) > delay * 0.95
+            assert (time.monotonic() - start_time) > delay * 0.95
         except Exception as error:
             failed = error
     failed = False
@@ -355,7 +355,7 @@ def test_queue_get_is_blocking_by_default_other_interpreter():
                 start_time = time.monotonic()
                 try:
                     assert q_send.get() == "element"
-                    assert (time.monotonic() - start_time()) > {delay} * 0.95
+                    assert (time.monotonic() - start_time) > {delay} * 0.95
                 except Exception as error:
                     failed = error
                 q_response.put(str(failed)) # the error name is enough

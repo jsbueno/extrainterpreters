@@ -624,8 +624,10 @@ class LockableBoard:
         control.state = State.locked
         control.lock = 0
         buffer = _remote_memory(control.content_address, control.content_length)
-        item = pickle.loads(buffer)
-        del buffer
+        try:
+            item = pickle.loads(buffer)
+        finally:
+            del buffer
         # Maybe add an option to "peek" an item only?
         # all that would be needed would be to restore state to "ready"
         control.state = State.garbage
