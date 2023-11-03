@@ -5,6 +5,8 @@ import warnings
 from weakref import WeakValueDictionary
 from datetime import datetime
 
+import extrainterpreters
+
 
 # Unified selector for all Pipes, queues in a given interpreter:
 
@@ -55,10 +57,11 @@ class EISelector:
         if self.select_depth == 1:
             self.entered_callbacks = set()
         x = self.selector.select(timeout)
-        from . import interpreters
-        if interpreters.get_current() != 0:
-            with open("bla", "at") as f:
-                f.write(f"{datetime.now().isoformat()} - {x}\n\n")
+        if getattr(extrainterpreters, "DEBUG", False):
+            from . import interpreters
+            if interpreters.get_current() != 0:
+                with open("subinterpreter_select_log", "at") as f:
+                    f.write(f"{datetime.now().isoformat()} - {x}\n\n")
         for key, events in x:
             for callback in key.data:
                 if callback not in self.entered_callbacks:

@@ -57,10 +57,12 @@ class _PipeBase:
         self._read_ready_flag = True
 
     def select(self, timeout=0):
-        # Think better on this:
+        start = time.monotonic()
         self._read_ready_flag = False
-        EISelector.select(timeout=timeout)
-        self._read_ready_flag
+        ellapsed = 0
+        while not self._read_ready_flag and (timeout is None or ellapsed < timeout):
+            EISelector.select(timeout=timeout)
+            ellapsed = time.monotonic() - start
         return self._read_ready_flag
 
     def _write_ready_callback(self, *args):
@@ -459,6 +461,8 @@ class Queue(_ABSQueue):
         """
         _inner function - must be called only from .get()
         """
+
+        # FIXME: This code likely needs a lock -
         origin_pipe = self._signal_pipe
         tmp = self._buffer.fetch_item()
         if not tmp:
