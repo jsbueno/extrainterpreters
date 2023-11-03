@@ -59,10 +59,14 @@ class _PipeBase:
     def select(self, timeout=0):
         start = time.monotonic()
         self._read_ready_flag = False
-        ellapsed = 0
-        while not self._read_ready_flag and (timeout is None or ellapsed < timeout):
+        ellapsed = current_ellapsed = 0
+        current_timeout = timeout
+        while not self._read_ready_flag and (timeout is None or ellapsed <= timeout):
+            if timeout is not None:
+                current_timeout -= current_ellapsed
             EISelector.select(timeout=timeout)
-            ellapsed = time.monotonic() - start
+            current_ellapsed = (now:=time.monotonic()) - ellapsed
+            ellapsed = now - start
         return self._read_ready_flag
 
     def _write_ready_callback(self, *args):
