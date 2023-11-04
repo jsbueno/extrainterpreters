@@ -12,7 +12,7 @@ memoryboard_module = [
 
 setuptools.setup(
     name="extrainterpreters",
-    version="0.2-dev1",
+    version="0.2-alpha1",
     author="João S. O. Bueno",
     author_email="gwidion@gmail.com",
     description="Utilities for concurrent code using subinterpreters",

@@ -3,7 +3,11 @@ import time
 from textwrap import dedent as D
 
 
-from extrainterpreters.memoryboard import LockableBoard, _CrossInterpreterStructLock, RemoteArray
+from extrainterpreters.memoryboard import (
+    LockableBoard,
+    _CrossInterpreterStructLock,
+    RemoteArray,
+)
 from extrainterpreters import memoryboard
 from extrainterpreters.utils import StructBase, Field
 from extrainterpreters import Interpreter
@@ -12,10 +16,11 @@ import extrainterpreters as ei
 
 import pytest
 
+
 def test_lockableboard_single_item_back_and_forth(lowlevel):
     board = LockableBoard()
     size = board.collect()
-    index, _ = board.new_item(obj:={"a":1})
+    index, _ = board.new_item(obj := {"a": 1})
     assert index == 0
     assert board.collect() == size - 1
 
@@ -25,42 +30,48 @@ def test_lockableboard_single_item_back_and_forth(lowlevel):
     assert new_obj == obj and new_obj is not obj
     assert board.collect() == size
 
+
 def test_lockableboard_to_other_interpreter(lowlevel):
     board = LockableBoard()
     size = board.collect()
     interp = ei.Interpreter().start()
-    board.new_item((1,2))
-    interp.run_string(D(f"""
+    board.new_item((1, 2))
+    interp.run_string(
+        D(
+            f"""
         import extrainterpreters; extrainterpreters.DEBUG=True
         board = pickle.loads({pickle.dumps(board)})
         index, item = board.fetch_item()
         assert item == (1,2)
         board.new_item((3,4))
-    """))
+    """
+        )
+    )
     index, item = board.fetch_item()
-    assert item == (3,4)
+    assert item == (3, 4)
     assert board.collect() == size
     # TBD: this design leaks "board.locks" items
     # until a collection is also done on the subinterpreter.
     # (leaking is limited to the number of slots on the memoryboard,tough)
 
+
 # FileLikeArray is no more
-#def test_filelikearray_creates_a_remote_memory_buffer_on_unpickle(lowlevel):
-    #aa = FileLikeArray(bytearray([0,] * 256))
-    #bb = pickle.dumps(aa)
-    #cc = pickle.loads(bb)
-    #assert isinstance(cc.data, memoryview)
-    #cc[0] = 42
-    #assert aa[0] == 42
+# def test_filelikearray_creates_a_remote_memory_buffer_on_unpickle(lowlevel):
+# aa = FileLikeArray(bytearray([0,] * 256))
+# bb = pickle.dumps(aa)
+# cc = pickle.loads(bb)
+# assert isinstance(cc.data, memoryview)
+# cc[0] = 42
+# assert aa[0] == 42
 
 # LockableBoardChild is no more
-#def test_lockableboard_unpickles_as_child_counterpart(lowlevel):
-    #import pickle
-    #aa = LockableBoardParent()
-    #aa.new_item((1,2))
-    #bb = pickle.loads(pickle.dumps(aa))
-    #assert isinstance(bb, LockableBoardChild)
-    #assert bb.()[1] == (1, 2)
+# def test_lockableboard_unpickles_as_child_counterpart(lowlevel):
+# import pickle
+# aa = LockableBoardParent()
+# aa.new_item((1,2))
+# bb = pickle.loads(pickle.dumps(aa))
+# assert isinstance(bb, LockableBoardChild)
+# assert bb.()[1] == (1, 2)
 
 
 @pytest.fixture
@@ -68,6 +79,7 @@ def lockable():
     class LockableStruct(StructBase):
         lock = Field(1)
         value = Field(8)
+
     return LockableStruct(lock=0, value=0)
 
 
@@ -100,6 +112,7 @@ def test_structlock_locks(lockable):
         assert lockable.lock == 1
     with lock2:
         assert lockable.lock == 1
+
 
 @pytest.mark.parametrize("set_timeout", [None, 0.0001])
 def test_structlock_timeout_is_restored_on_acquire_fail(lockable, set_timeout):
@@ -146,6 +159,7 @@ def test_remotearray_not_deleted_before_ttl_expires():
     xx = memoryboard._array_registry
     memoryboard._array_registry = []
     import gc
+
     buffer = RemoteArray(size=2048, ttl=0.1)
     assert buffer.header.state == memoryboard.RemoteState.building
     with buffer:
@@ -173,17 +187,25 @@ def test_remotearray_not_deleted_before_ttl_expires():
 def test_memoryboard_fetch_from_gone_interpreter_doesnot_crash(lowlevel):
     interp = ei.Interpreter().start()
     board = LockableBoard()
-    interp.run_string(D(f"""\
+    interp.run_string(
+        D(
+            f"""\
         import extrainterpreters; extrainterpreters.DEBUG = True
         board = pickle.loads({pickle.dumps(board)})
         board.new_item((1,2))
 
-    """))
+    """
+        )
+    )
     index, item = board.fetch_item()
-    assert item == (1,2)
-    interp.run_string(D(f"""\
+    assert item == (1, 2)
+    interp.run_string(
+        D(
+            f"""\
         board.new_item((3, 4))
-    """))
+    """
+        )
+    )
     interp.close()
     assert board.fetch_item() is None
     pass

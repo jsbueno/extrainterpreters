@@ -10,22 +10,30 @@ from textwrap import dedent as D
 import queue as threading_queue
 from queue import Empty, Full  #  make these available to users
 
-from .utils import guard_internal_use, StructBase, Field, _InstMode, non_reentrant, ResourceBusyError
+from .utils import (
+    guard_internal_use,
+    StructBase,
+    Field,
+    _InstMode,
+    non_reentrant,
+    ResourceBusyError,
+)
 from .memoryboard import LockableBoard, RemoteArray, RemoteState
 from . import interpreters
 from .resources import EISelector, register_pipe, PIPE_REGISTRY
 
 
-#TBD: Fix blocking/timeout semantics
+# TBD: Fix blocking/timeout semantics
 # (default for timeout=None should be "wait forever" everywhere)
 _DEFAULT_BLOCKING_TIMEOUT = 5  #
+
 
 class ActiveInstance(StructBase):
     counter = Field(2)
 
 
 class _PipeBase:
-    #class LockableMixin:
+    # class LockableMixin:
     def __init__(self):
         # TBD: a "multiinterpreter lock" will likely be a wrapper over this patterh
         # use that as soon as it is done:
@@ -36,7 +44,6 @@ class _PipeBase:
     @property
     def active(self):
         return ActiveInstance._from_data(self._lock_array, 0)
-
 
     def _post_init(self):
         if self._lock_array._data is None:
@@ -49,13 +56,12 @@ class _PipeBase:
         # needed by pickle.load
         result = []
         read_byte = ...
-        while read_byte and read_byte != '\n':
-            result.append(read_byte:=self.read(1))
+        while read_byte and read_byte != "\n":
+            result.append(read_byte := self.read(1))
         return b"".join(result)
 
     def _read_ready_callback(self, key, *args):
         self._read_ready_flag = True
-
 
     def select(self, timeout=0):
         self._read_ready_flag = False
@@ -80,6 +86,7 @@ class _PipeBase:
             return os.write(self.writer_fd, data)
 
         raise TimeoutError("FD not ready for writting - Pipe full")
+
     write = send
 
     def read_blocking(self, amount=4096):
@@ -136,6 +143,7 @@ class _SimplexPipe(_PipeBase):
     so that even if unpickled several times in the same interpreter
     it still uses the same underlying resources.
     """
+
     # TBD: Refactor features common to "_DuplexPipe" (Pipe cls bellow)
     def __init__(self):
         self.reader_fd, self.writer_fd = self._all_fds = register_pipe(os.pipe(), self)
@@ -154,9 +162,13 @@ class _SimplexPipe(_PipeBase):
         return instance
 
     def __reduce__(self):
-        return type(self)._unpickler, (self.reader_fd, self.writer_fd), self.__dict__.copy()
+        return (
+            type(self)._unpickler,
+            (self.reader_fd, self.writer_fd),
+            self.__dict__.copy(),
+        )
 
-    #@guard_internal_use
+    # @guard_internal_use
     def __setstate__(self, state):
         if getattr(self, "_new_in_interpreter", False):
             # initialize only on first unpickle in an interpreter
@@ -169,12 +181,15 @@ class _SimplexPipe(_PipeBase):
 
     def _post_init(self):
         self.closed = False
-        EISelector.register(self.reader_fd, selectors.EVENT_READ, self._read_ready_callback)
-        EISelector.register(self.writer_fd, selectors.EVENT_WRITE, self._write_ready_callback)
+        EISelector.register(
+            self.reader_fd, selectors.EVENT_READ, self._read_ready_callback
+        )
+        EISelector.register(
+            self.writer_fd, selectors.EVENT_WRITE, self._write_ready_callback
+        )
         self._read_ready_flag = False
         self._write_ready_flag = False
         super()._post_init()
-
 
 
 class _DuplexPipe(_PipeBase):
@@ -183,6 +198,7 @@ class _DuplexPipe(_PipeBase):
     # warning - not sure if this will be kept in the API at all.
     # do not rely on it
     """
+
     def __init__(self):
         self.originator_fds = os.pipe()
         self.counterpart_fds = os.pipe()
@@ -207,7 +223,10 @@ class _DuplexPipe(_PipeBase):
         self.__dict__.update(state)
         if current != state["_bound_interp"]:
             # reverse the direction in child intrepreter
-            self.originator_fds, self.counterpart_fds = self.counterpart_fds, self.originator_fds
+            self.originator_fds, self.counterpart_fds = (
+                self.counterpart_fds,
+                self.originator_fds,
+            )
         self._post_init()
         if hasattr(self, "_post_setstate"):
             self._post_setstate(state)
@@ -216,8 +235,12 @@ class _DuplexPipe(_PipeBase):
         self.writer_fd = self.originator_fds[1]
         self.reader_fd = self.counterpart_fds[0]
         self.closed = False
-        EISelector.register(self.counterpart_fds[0], selectors.EVENT_READ, self._read_ready_callback)
-        EISelector.register(self.originator_fds[1], selectors.EVENT_WRITE, self._write_ready_callback)
+        EISelector.register(
+            self.counterpart_fds[0], selectors.EVENT_READ, self._read_ready_callback
+        )
+        EISelector.register(
+            self.originator_fds[1], selectors.EVENT_WRITE, self._write_ready_callback
+        )
         self._read_ready_flag = False
         self._write_ready_flag = False
         super()._post_init()
@@ -242,16 +265,23 @@ def _parent_only(func):
     @wraps(func)
     def wrapper(self, *args, **kw):
         if self.mode != _InstMode.parent:
-            raise RuntimeError(f"Invalid queue state: {func.__name__} can only be called on parent interpreter")
+            raise RuntimeError(
+                f"Invalid queue state: {func.__name__} can only be called on parent interpreter"
+            )
         return func(self, *args, **kw)
+
     return wrapper
+
 
 def _child_only(func):
     @wraps(func)
     def wrapper(self, *args, **kw):
         if self.mode != _InstMode.child:
-            raise RuntimeError(f"Invalid queue state: {func.__name__} can only be called on child interpreter")
+            raise RuntimeError(
+                f"Invalid queue state: {func.__name__} can only be called on child interpreter"
+            )
         return func(self, *args, **kw)
+
     return wrapper
 
 
@@ -275,7 +305,9 @@ class SingleQueue(_ABSQueue):
     a sub-interpreter, the instance will assume the "child side" state  -
     appropriate methods should only be used in each side. (basically: put on parent, get on child)
     """
+
     mode = _InstMode.parent
+
     @_parent_only
     def __init__(self, maxsize=0):
         self.maxsize = maxsize
@@ -287,7 +319,9 @@ class SingleQueue(_ABSQueue):
 
     def _post_init_parent(self):
         self._writing_fd = self.pipe.originator_fds[1]
-        EISelector.register(self._writing_fd, selectors.EVENT_WRITE, self._ready_to_write)
+        EISelector.register(
+            self._writing_fd, selectors.EVENT_WRITE, self._ready_to_write
+        )
         self._ready_to_write_flag = False
 
     def __getstate__(self):
@@ -297,6 +331,7 @@ class SingleQueue(_ABSQueue):
     @guard_internal_use
     def __setstate__(self, state):
         from . import interpreters
+
         self.__dict__.update(state)
         if self.pipe._bound_interp == interpreters.get_current():
             self._post_init_parent()
@@ -308,15 +343,13 @@ class SingleQueue(_ABSQueue):
         # implicit binary protocol:
         # other end of pipe should post, as an unsigned byte,
         # the amount of tasks confirmed with ".task_done()"
-        if (amount:=self.pipe.read()):
+        if amount := self.pipe.read():
             for done_count in amount:
                 self._size -= done_count
         return self._size
 
-
     def qsize(self):
-        """Return the approximate size of the queue. Note, qsize() > 0 doesn-’t guarantee that a subsequent get() will not block, nor will qsize() < maxsize guarantee that put() will not block.
-        """
+        """Return the approximate size of the queue. Note, qsize() > 0 doesn-’t guarantee that a subsequent get() will not block, nor will qsize() < maxsize guarantee that put() will not block."""
         return self.size
 
     def empty(self):
@@ -327,8 +360,7 @@ class SingleQueue(_ABSQueue):
         pass
 
     def full(self):
-        """Return True if the queue is full, False otherwise. If full() returns True it doesn’t guarantee that a subsequent call to get() will not block. Similarly, if full() returns False it doesn’t guarantee that a subsequent call to put() will not block.
-        """
+        """Return True if the queue is full, False otherwise. If full() returns True it doesn’t guarantee that a subsequent call to get() will not block. Similarly, if full() returns False it doesn’t guarantee that a subsequent call to put() will not block."""
         if not self._ready_to_send():
             return True
         return self.size >= self.maxsize
@@ -344,8 +376,7 @@ class SingleQueue(_ABSQueue):
 
     @_parent_only
     def put(self, item, block=True, timeout=None):
-        """Put item into the queue. If optional args block is true and timeout is None (the default), block if necessary until a free slot is available. If timeout is a positive number, it blocks at most timeout seconds and raises the Full exception if no free slot was available within that time. Otherwise (block is false), put an item on the queue if a free slot is immediately available, else raise the Full exception (timeout is ignored in that case).
-        """
+        """Put item into the queue. If optional args block is true and timeout is None (the default), block if necessary until a free slot is available. If timeout is a positive number, it blocks at most timeout seconds and raises the Full exception if no free slot was available within that time. Otherwise (block is false), put an item on the queue if a free slot is immediately available, else raise the Full exception (timeout is ignored in that case)."""
         ready = False
         if self._ready_to_send():
             ready = True
@@ -375,15 +406,11 @@ class SingleQueue(_ABSQueue):
         self.pipe.send(pickle.dumps(item))
         self._size += 1
 
-
-
     @_child_only
     def get(self, block=True, timeout=None):
-        """Remove and return an item from the queue. If optional args block is true and timeout is None (the default), block if necessary until an item is available. If timeout is a positive number, it blocks at most timeout seconds and raises the Empty exception if no item was available within that time. Otherwise (block is false), return an item if one is immediately available, else raise the Empty exception (timeout is ignored in that case).
-        """
+        """Remove and return an item from the queue. If optional args block is true and timeout is None (the default), block if necessary until an item is available. If timeout is a positive number, it blocks at most timeout seconds and raises the Empty exception if no item was available within that time. Otherwise (block is false), return an item if one is immediately available, else raise the Empty exception (timeout is ignored in that case)."""
         # TBD: many fails. fix
         return pickle.load(self.pipe)
-
 
     """Two methods are offered to support tracking whether enqueued tasks have been fully processed by daemon consumer interpreters
     """
@@ -436,7 +463,11 @@ class Queue(_ABSQueue):
 
     @property
     def mode(self):
-        return _InstMode.parent if interpreters.get_current() == self._parent_interp else _InstMode.child
+        return (
+            _InstMode.parent
+            if interpreters.get_current() == self._parent_interp
+            else _InstMode.child
+        )
 
     def __getstate__(self):
         ns = self.__dict__.copy()
@@ -480,7 +511,7 @@ class Queue(_ABSQueue):
         # what exists for normal queues
         # (a plain .get() should just block forever until there is data)
         if not block:
-            timeout=0
+            timeout = 0
         elif timeout is None:
             timeout = _DEFAULT_BLOCKING_TIMEOUT
 
@@ -490,7 +521,6 @@ class Queue(_ABSQueue):
         if self._data:
             return self._data.popleft()
         raise threading_queue.Empty()
-
 
     def put(self, item, block=True, timeout=None):
         if block and not timeout:

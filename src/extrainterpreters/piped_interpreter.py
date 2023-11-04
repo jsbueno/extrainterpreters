@@ -1,4 +1,3 @@
-
 import sys
 import pickle
 import weakref
@@ -12,7 +11,7 @@ from .simple_interpreter import _BufferedInterpreter
 from .utils import Field, StructBase
 
 
-class WorkerOpcodes: # WorkerOpecodes
+class WorkerOpcodes:  # WorkerOpecodes
     close = 0
     import_module = 1
     run_func_no_args = 2
@@ -22,6 +21,7 @@ class WorkerOpcodes: # WorkerOpecodes
 
 
 WO = WorkerOpcodes
+
 
 class ExecModes:
     immediate = 0
@@ -34,6 +34,7 @@ class Command(StructBase):
     exec_mode = Field(1)
     data_record = Field(2)
     data_extra = Field(4)
+
 
 class FuncData(StructBase):
     data_offset = Field(4)
@@ -69,39 +70,46 @@ def _dispatcher(pipe, buffer):
                     pass  # opcode not implemented
         except Exception as err:
             # TBD: define exceptions policy
-            print(err, f"in interpreter {interpreters.get_current()}\n\n", file=sys.stderr)
+            print(
+                err, f"in interpreter {interpreters.get_current()}\n\n", file=sys.stderr
+            )
     pipe.send(b"ok")
 
 
 class PipedInterpreter(_BufferedInterpreter):
     """
-        This code is unused - and will probably remain so.
+    This code is unused - and will probably remain so.
 
 
-        A single interpreter type is to be used - aditional
-        subinterpreter capabilities, like being a member
-        of a worker-pool will be added by calling aditional
-        methods on it
+    A single interpreter type is to be used - aditional
+    subinterpreter capabilities, like being a member
+    of a worker-pool will be added by calling aditional
+    methods on it
     """
-
-
 
     def _interp_init_code(self):
         code = super()._interp_init_code()
-        code += D(f"""\
+        code += D(
+            f"""\
             import extrainterpreters
             import threading
 
             # pipe = extrainterpreters.Pipe.counterpart_from_fds({self.pipe.originator_fds}, {self.pipe.counterpart_fds})
             disp_thread = threading.Thread(target=extrainterpreters.piped_interpreter._dispatcher, args=(pipe, _m))
             disp_thread.start()
-        """)
+        """
+        )
         return code
 
     def execute(self, func, args=(), kwargs=None):
         # WIP: find out free range in buffer
         slot = 0
-        cmd = Command(opcode=WO.run_func_args_kwargs, exec_mode=ExecModes.immediate, data_record=slot, data_extra=0)
+        cmd = Command(
+            opcode=WO.run_func_args_kwargs,
+            exec_mode=ExecModes.immediate,
+            data_record=slot,
+            data_extra=0,
+        )
         data_offset = self.buffer.nranges["send_data"]
         self.map.seek(data_offset)
         pickle.dump(func, self.map)
@@ -125,6 +133,3 @@ class PipedInterpreter(_BufferedInterpreter):
             self.pipe.read(timeout=None)
             self.pipe.close()
         super()._close_channel()
-
-
-

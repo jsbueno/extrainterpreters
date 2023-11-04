@@ -1,4 +1,5 @@
 import time
+
 # uncomment the next line to witness general mayhen:
 # import pytest
 
@@ -10,9 +11,11 @@ import time
 
 time_res = 0.02
 
+
 def to_run_remotely():
     time.sleep(time_res * 2)
     return 42
+
 
 def big_return_payload():
     return b"\x00" * 2_000_001
@@ -29,9 +32,11 @@ class RemoteClass:
     def __call__(self):
         return 23
 
+
 def main():
     # try to execute function in __main__ file.
     import extrainterpreters
+
     with extrainterpreters.Interpreter() as interp:
         interp.run_in_thread(to_run_remotely)
         while not interp.done():

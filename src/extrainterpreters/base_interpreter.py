@@ -12,8 +12,8 @@ from . import interpreters, BFSZ, running_interpreters
 
 _TTL = 0.01
 
-class BaseInterpreter:
 
+class BaseInterpreter:
     def __init__(self):
         # .intno and .id are both set to the interpreter id,
         # but .intno is set to None when the interpreter is closed.
@@ -83,13 +83,17 @@ class BaseInterpreter:
         Call `.done()` to check the execution is complete
         and `.result()` to retrieve the return value.
         """
-        self.thread = threading.Thread(target=self.execute, args=(func,),  kwargs={"args": args, "kwargs":kwargs})
+        self.thread = threading.Thread(
+            target=self.execute, args=(func,), kwargs={"args": args, "kwargs": kwargs}
+        )
         self.thread.start()
         return True
 
     def _source_handle(self, func):
-
-        if func.__name__ in self._source_handled and hash(func) == self._source_handled[func.__name__]:
+        if (
+            func.__name__ in self._source_handled
+            and hash(func) == self._source_handled[func.__name__]
+        ):
             return
         source = inspect.getsource(func)
         self.run_string(source)  # "types" function in remote interpreter __main__
@@ -131,13 +135,15 @@ class BaseInterpreter:
 
         for name, obj in list(main_globals.items()):
             if isinstance(obj, FunctionType):
-                if (mod_name:=getattr(obj, "__module__", None)) == "__main__":
+                if (mod_name := getattr(obj, "__module__", None)) == "__main__":
                     self._source_handle(obj)
                 else:
                     self._handle_module(mod_name)
                     # Poor man's "from x import y"
                     if func.__name__ not in self._source_handled:
-                        self.run_string(f"{name} = getattr({mod_name}, '{obj.__name__}')")
+                        self.run_string(
+                            f"{name} = getattr({mod_name}, '{obj.__name__}')"
+                        )
             elif isinstance(obj, ModuleType):
                 mod_name = obj.__name__
                 self._handle_module(mod_name)
@@ -149,10 +155,13 @@ class BaseInterpreter:
     def execute(self, func, args=(), kwargs=None):
         # to sub-interpreter.
         if self.intno is None:
-            raise RuntimeError(D("""\
+            raise RuntimeError(
+                D(
+                    """\
                 Sub-interpreter not initialized. Call ".start()" or enter context to make calls.
-                """))
-
+                """
+                )
+            )
 
     def run_string(self, code):
         """Execs a string of code in associated interpreter
@@ -161,16 +170,15 @@ class BaseInterpreter:
         """
         return interpreters.run_string(self.intno, code)
 
-
     #  currently not working. will raise when the interpreter is destroyed:
-    #def is_running(self):
-        #"""Proxies interpreters.is_running
+    # def is_running(self):
+    # """Proxies interpreters.is_running
 
-        #Can be used instead of "done" to check if work
-        #in a threaded call has ended.
-        #"""
-        #with self.lock:
-            #return interpreters.is_running(self.intno)
+    # Can be used instead of "done" to check if work
+    # in a threaded call has ended.
+    # """
+    # with self.lock:
+    # return interpreters.is_running(self.intno)
 
     def result(self):
         raise NotImplementedError()
@@ -186,4 +194,3 @@ class BaseInterpreter:
 
     def done(self):
         raise NotImplementedError()
-

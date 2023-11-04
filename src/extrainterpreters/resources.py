@@ -13,6 +13,7 @@ import extrainterpreters
 
 FILE_WATCHER = DefaultSelector()
 
+
 class EISelector:
     # A Per interpreter Selector instance which will
     # orchestrate the pipe-data availability and callbacks
@@ -37,18 +38,19 @@ class EISelector:
         is_method = isinstance(callback, MethodType)
         for reg_callback in previous_key.data:
             if (
-                reg_callback is callback or
-                isinstance(reg_callback, MethodType) and is_method and
-                reg_callback.__self__ is callback.__self__ and
-                reg_callback.__func__ is callback.__func__
+                reg_callback is callback
+                or isinstance(reg_callback, MethodType)
+                and is_method
+                and reg_callback.__self__ is callback.__self__
+                and reg_callback.__func__ is callback.__func__
             ):
                 break
         else:
-            new_data = previous_key.data + (callback, )
+            new_data = previous_key.data + (callback,)
             self.selector.modify(file, event, new_data)
 
     def select(self, timeout=None, target_fd=None):
-        """ calls the O.S. selector method and calls back any
+        """calls the O.S. selector method and calls back any
         callables in `data` for all given keys
 
         The obserbality will end when the first of
@@ -70,8 +72,9 @@ class EISelector:
         ellapsed = ellapsed_in_step = 0
         adjusted_timeout = timeout
         target_fd_reached = False
-        while (target_fd is None or not target_fd_reached) and (timeout is None or ellapsed <= timeout):
-
+        while (target_fd is None or not target_fd_reached) and (
+            timeout is None or ellapsed <= timeout
+        ):
             x = self.selector.select(adjusted_timeout)
 
             for key, events in x:
@@ -84,7 +87,9 @@ class EISelector:
                     try:
                         callback(key)
                     except Exception as err:
-                        warnings.warn(f"Error in select callback {getattr(callback, "__qualname__", callback)}: {err}")
+                        warnings.warn(
+                            f"Error in select callback {getattr(callback, '__qualname__', callback)}: {err}"
+                        )
                     finally:
                         self.entered_callbacks.remove(callback)
             ellapsed_in_step = time.monotonic() - (start_time + ellapsed)
@@ -94,16 +99,17 @@ class EISelector:
 
         self.select_depth -= 1
 
-
     def unregister(self, file):
         self.selector.unregister(file)
 
     # TBD: think of a mechanism to ensure resources of gone objects are unregistered.
 
+
 # singleton:
 EISelector = EISelector()
 
 PIPE_REGISTRY = WeakValueDictionary()
+
 
 def register_pipe(keys, instance):
     """Not for public use.
@@ -115,5 +121,3 @@ def register_pipe(keys, instance):
     """
     PIPE_REGISTRY[keys] = instance
     return keys
-
-

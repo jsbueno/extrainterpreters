@@ -9,7 +9,14 @@ from collections.abc import MutableSequence
 
 from . import interpreters, running_interpreters
 from . import _memoryboard
-from .utils import guard_internal_use, Field, DoubleField, StructBase, _InstMode, ResourceBusyError
+from .utils import (
+    guard_internal_use,
+    Field,
+    DoubleField,
+    StructBase,
+    _InstMode,
+    ResourceBusyError,
+)
 
 from ._memoryboard import _remote_memory, _address_and_size, _atomic_byte_lock
 
@@ -32,10 +39,12 @@ class RemoteHeader(StructBase):
     enter_count = Field(3)
     exit_count = Field(3)
 
+
 class RemoteDataState:
     not_ready = 0
     read_only = 1  # not used for now.
     read_write = 2
+
 
 TIME_RESOLUTION = 0.002
 DEFAULT_TIMEOUT = 50 * TIME_RESOLUTION
@@ -45,8 +54,8 @@ REMOTE_HEADER_SIZE = RemoteHeader._size
 
 class _CrossInterpreterStructLock:
     def __init__(self, struct, timeout=DEFAULT_TIMEOUT):
-        buffer_ptr, size = _address_and_size(struct._data)#, struct._offset)
-        #struct_ptr = buffer_ptr + struct._offset
+        buffer_ptr, size = _address_and_size(struct._data)  # , struct._offset)
+        # struct_ptr = buffer_ptr + struct._offset
         lock_offset = struct._offset + struct._get_offset_for_field("lock")
         if lock_offset >= size:
             raise ValueError("Lock address out of bounds for struct buffer")
@@ -99,12 +108,14 @@ class _CrossInterpreterStructLock:
         state["_entered"] = False
         return state
 
+
 # when a RemoteArray can't be destroyed in parent,
 # it comes to "sleep" here, where a callback in the
 # GC will periodically try to remove it:
 _array_registry = []
 
 _collecting_generation = 1
+
 
 def _collector(action, data):
     """Garbage Collector "plug-in":
@@ -128,8 +139,11 @@ def _collector(action, data):
             new_registry.append(buffer)
     _array_registry[:] = new_registry
 
+
 import gc
+
 gc.callbacks.append(_collector)
+
 
 @MutableSequence.register
 class RemoteArray:
@@ -180,8 +194,18 @@ class RemoteArray:
             - if no GC hook possible,think of another reasonable mechanism to periodically try to delete pending deletion buffers. (dedicate thread with one check per second? Less frequent?
 
     """
-    __slots__ = ("_cursor", "_lock", "_data", "_data_state", "_size", "_anchor", "_mode", "_timestamp", "_ttl", "_internal")
-
+    __slots__ = (
+        "_cursor",
+        "_lock",
+        "_data",
+        "_data_state",
+        "_size",
+        "_anchor",
+        "_mode",
+        "_timestamp",
+        "_ttl",
+        "_internal",
+    )
 
     def __init__(self, *, size=None, payload=None, ttl=DEFAULT_TTL):
         if size is None and payload is not None:
@@ -217,8 +241,13 @@ class RemoteArray:
         return index
 
     def __getitem__(self, index):
-        if not self._data_state in (RemoteDataState.read_only, RemoteDataState.read_write):
-            raise RuntimeError("Trying to read data from buffer that is not ready for use")
+        if not self._data_state in (
+            RemoteDataState.read_only,
+            RemoteDataState.read_write,
+        ):
+            raise RuntimeError(
+                "Trying to read data from buffer that is not ready for use"
+            )
         return self._data.__getitem__(self._convert_index(index))
 
     def __setitem__(self, index, value):
@@ -227,7 +256,9 @@ class RemoteArray:
         # provide a timeouted method that will wait for it.
         # (going for that):
         if self._data_state != RemoteDataState.read_write:
-            raise RuntimeError("Trying to write data to buffer that is not ready for use")
+            raise RuntimeError(
+                "Trying to write data to buffer that is not ready for use"
+            )
         with self._lock:
             return self._data.__setitem__(self._convert_index(index), value)
         raise RuntimeError("Remote Array busy in other thread")
@@ -235,7 +266,9 @@ class RemoteArray:
     def _enter_child(self):
         ttl = self._check_ttl()
         if not ttl:
-            raise RuntimeError(f"TTL Exceeded trying to use buffer in sub-interpreter {interpreters.get_current()}")
+            raise RuntimeError(
+                f"TTL Exceeded trying to use buffer in sub-interpreter {interpreters.get_current()}"
+            )
         self._data = _remote_memory(*self._internal[:2])
         self._lock = self._internal[2]
         self._cursor = 0
@@ -244,9 +277,14 @@ class RemoteArray:
             ttl = self._check_ttl()
             if not ttl:
                 self._data = None
-                raise RuntimeError(f"TTL Exceeded trying to use buffer in sub-interpreter {interpreters.get_current()}, (stage 2)")
+                raise RuntimeError(
+                    f"TTL Exceeded trying to use buffer in sub-interpreter {interpreters.get_current()}, (stage 2)"
+                )
             self._data_state = RemoteDataState.read_write
-            if (state:=self.header.state) not in (RemoteState.serialized, RemoteState.received):
+            if (state := self.header.state) not in (
+                RemoteState.serialized,
+                RemoteState.received,
+            ):
                 self._data = None
                 raise RuntimeError(f"Invalid state in buffer: {state}")
             self.header.enter_count += 1
@@ -261,8 +299,14 @@ class RemoteArray:
 
     def start(self):
         if self._mode == _InstMode.zombie:
-            raise RuntimeError("This buffer is decomissioned and no longer can be used for data exchange")
-        return self._enter_child() if self._mode == _InstMode.child else self._enter_parent()
+            raise RuntimeError(
+                "This buffer is decomissioned and no longer can be used for data exchange"
+            )
+        return (
+            self._enter_child()
+            if self._mode == _InstMode.child
+            else self._enter_parent()
+        )
 
     def __delitem__(self, index):
         raise NotImplementedError()
@@ -279,13 +323,13 @@ class RemoteArray:
                 n = len(self) - self._cursor
             prev = self._cursor
             self._cursor += n
-            return self[prev: self._cursor]
+            return self[prev : self._cursor]
 
     def write(self, content):
         with self._lock:
             if isinstance(content, str):
                 content = content.encode("utf-8")
-            self[self._cursor: self._cursor + len(content)] = content
+            self[self._cursor : self._cursor + len(content)] = content
             self._cursor += len(content)
 
     def tell(self):
@@ -297,10 +341,10 @@ class RemoteArray:
         read = 0
         with self._lock:
             cursor = self._cursor
-            while read != 0x0a:
+            while read != 0x0A:
                 if cursor >= len(self):
                     break
-                result.append(read:=self[cursor])
+                result.append(read := self[cursor])
                 cursor += 1
             self._cursor = self.cursor
         return bytes(result)
@@ -310,24 +354,29 @@ class RemoteArray:
 
     def _data_for_remote(self):
         # TBD: adjust when spliting payload buffer from header buffer
-        #return _address_and_size(self.data)
+        # return _address_and_size(self.data)
         address, length = _address_and_size(self._data)
         address += RemoteHeader._size
         length -= RemoteHeader._size
         return address, length
 
-
     def __getstate__(self):
         with self._lock:
-            if self.header.state not in (RemoteState.ready, RemoteState.serialized, RemoteState.received):
-                raise RuntimeError(f"Can not pickle remote buffer in current state (self.header.state)")
+            if self.header.state not in (
+                RemoteState.ready,
+                RemoteState.serialized,
+                RemoteState.received,
+            ):
+                raise RuntimeError(
+                    f"Can not pickle remote buffer in current state (self.header.state)"
+                )
         with self._lock:
             if self.header.state == RemoteState.ready:
                 self.header.state = RemoteState.serialized
         state = {"buffer_data": _address_and_size(self._data)}
         state["ttl"] = self._ttl
-        #if not hasattr(self, "_timestamp"):
-            #self._timestamp = time.monotonic()
+        # if not hasattr(self, "_timestamp"):
+        # self._timestamp = time.monotonic()
         self._timestamp = time.monotonic()
         state["timestamp"] = self._timestamp
         state["_lock"] = self._lock
@@ -364,9 +413,8 @@ class RemoteArray:
         _array_registry.append(inst)
 
     def _check_ttl(self):
-        """Returns True if time-to-live has not expired
-        """
-        if not (timestamp:=getattr(self, "_timestamp", None)):
+        """Returns True if time-to-live has not expired"""
+        if not (timestamp := getattr(self, "_timestamp", None)):
             return True
         return time.monotonic() - timestamp <= self._ttl
 
@@ -382,7 +430,10 @@ class RemoteArray:
             self._data = None
             return
         with self._lock:
-            early_stages = self.header.state in (RemoteState.building, RemoteState.ready)
+            early_stages = self.header.state in (
+                RemoteState.building,
+                RemoteState.ready,
+            )
             if early_stages:
                 self.header.state = RemoteState.garbage
 
@@ -430,19 +481,18 @@ class BufferBase:
         self.close()
 
 
-
 class ProcessBuffer(BufferBase):
-    def __init__(self, size, ranges: dict[int,str]|None=None):
+    def __init__(self, size, ranges: dict[int, str] | None = None):
         if ranges is None:
             ranges = {
                 0: "command_area",
                 4096: "send_data",
-                (size // 5 * 4): "return_data"
+                (size // 5 * 4): "return_data",
             }
 
         self.size = size
         self.ranges = ranges
-        self.nranges = {v:k for k, v in ranges.items()}
+        self.nranges = {v: k for k, v in ranges.items()}
         self._init_range_sizes()
         self.map = RemoteArray(size=size)
         self.map.__enter__()
@@ -456,7 +506,9 @@ class ProcessBuffer(BufferBase):
                 self.range_sizes[prev_range] = offset - self.nranges[prev_range]
             prev_range = range_name
             if offset < last_range_start:
-                raise ValueError("Buffer Range window starts must be in ascending order")
+                raise ValueError(
+                    "Buffer Range window starts must be in ascending order"
+                )
             last_range_start = offset
 
     def __repr__(self):
@@ -467,19 +519,20 @@ class LockState:
     free = 0
     locked = 1
 
+
 class State:
     not_initialized = 0
     building = 1
     ready = 2
     locked = 3
-    #parent_review = 4
+    # parent_review = 4
     garbage = 5
 
 
 class BlockLock(StructBase):
-    state = Field(1) # State
+    state = Field(1)  # State
     lock = Field(1)  # LockState
-    owner = Field(4) # InterpreterID(threadID?)
+    owner = Field(4)  # InterpreterID(threadID?)
     content_type = Field(1)  # 0 for pickled data
     content_address = Field(8)
     content_length = Field(8)
@@ -487,6 +540,7 @@ class BlockLock(StructBase):
 
 class LockableBoard:
     maxblocks = 2048
+
     def __init__(self, size=None):
         self._size = size or self.maxblocks
         self.map = RemoteArray(size=self._size * BlockLock._size)
@@ -501,7 +555,11 @@ class LockableBoard:
 
     @property
     def mode(self):
-        return _InstMode.parent if interpreters.get_current() == self._parent_interp else _InstMode.child
+        return (
+            _InstMode.parent
+            if interpreters.get_current() == self._parent_interp
+            else _InstMode.child
+        )
 
     def __getstate__(self):
         ns = self.__dict__.copy()
@@ -583,7 +641,10 @@ class LockableBoard:
             if data[offset] == State.garbage:
                 self.blocks.pop(offset, None)
                 # data[offset] = data[offset + 1] = 0
-            if data[offset] in (State.not_initialized, State.garbage) and data[offset+1] == 0:
+            if (
+                data[offset] in (State.not_initialized, State.garbage)
+                and data[offset + 1] == 0
+            ):
                 lock_ptr = self.map._data_for_remote()[0] + offset + 1
                 if not _atomic_byte_lock(lock_ptr):
                     continue
@@ -593,13 +654,13 @@ class LockableBoard:
                 block.state = State.building
                 break
         else:
-            raise ValueError("Board full. Can't allocate data block to send to remote interpreter")
+            raise ValueError(
+                "Board full. Can't allocate data block to send to remote interpreter"
+            )
         return offset, block
 
-
     def fetch_item(self):
-        """Atomically retrieves an item posted with "new_item" and frees its block
-        """
+        """Atomically retrieves an item posted with "new_item" and frees its block"""
         control = BlockLock._from_data(self.map, 0)
         for index in range(0, self._size):
             offset = index * BlockLock._size
@@ -635,7 +696,6 @@ class LockableBoard:
         # with the buffer.
         return index, item
 
-
     # not implementing __len__ because occupied
     # blocks are not always in sequence. Trying
     # to iter with len + getitem will yield incorrect results.
@@ -664,4 +724,3 @@ class OwnableBuffer(BufferBase):
 
         self.map = RemoteArray(payload=payload)
         self.map.start()
-

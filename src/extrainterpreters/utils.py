@@ -2,13 +2,16 @@ import struct
 import sys
 from functools import wraps
 
-class ResourceBusyError(RuntimeError): pass
+
+class ResourceBusyError(RuntimeError):
+    pass
 
 
 class _InstMode:
     parent = "parent"
     child = "child"
     zombie = "zombie"
+
 
 def guard_internal_use(func):
     @wraps(func)
@@ -20,8 +23,11 @@ def guard_internal_use(func):
         if extrainterpreters and extrainterpreters.__dict__.get("DEBUG", False):
             pass
         elif not f.f_globals.get("__name__").startswith("extrainterpreters."):
-            raise RuntimeError(f"{func.__name__} can only be called from extrainterpreters code, under risk of causing a segmentation fault")
+            raise RuntimeError(
+                f"{func.__name__} can only be called from extrainterpreters code, under risk of causing a segmentation fault"
+            )
         return func(*args, **kwargs)
+
     return wrapper
 
 
@@ -60,11 +66,11 @@ class RawField:
         if instance is None:
             return self
         off = instance._offset + self.offset
-        return instance._data[off: off + self.size]
+        return instance._data[off : off + self.size]
 
     def __set__(self, instance, value):
         off = instance._offset + self.offset
-        instance._data[off: off + self.size] = value
+        instance._data[off : off + self.size] = value
 
 
 class Field(RawField):  # int field
@@ -87,11 +93,15 @@ class DoubleField(RawField):
         value = super().__get__(instance, owner)
         if not isinstance(value, (bytes, bytearray)):
             return value
-        return struct.unpack("d", value,)[0]
+        return struct.unpack(
+            "d",
+            value,
+        )[0]
 
     def __set__(self, instance, value):
         value = struct.pack("d", value)
         super().__set__(instance, value)
+
 
 class StructBase:
     """A Struct type class which can attach to offsets in an existing memory buffer
@@ -110,7 +120,9 @@ class StructBase:
         for field_name in self._fields:
             setattr(self, field_name, kwargs.pop(field_name))
         if kwargs:
-            raise ValueError(f"Unknown fields {kwargs} passed to {self.__class__.__name__}")
+            raise ValueError(
+                f"Unknown fields {kwargs} passed to {self.__class__.__name__}"
+            )
 
     @classmethod
     def _from_data(cls, _data, _offset=0):
@@ -135,7 +147,7 @@ class StructBase:
 
     @property
     def _bytes(self):
-        return bytes(self._data[self._offset: self._offset + self._size])
+        return bytes(self._data[self._offset : self._offset + self._size])
 
     @clsproperty
     def _size(cls):
@@ -146,7 +158,7 @@ class StructBase:
         return size
 
     def _detach(self):
-        self._data = self._data[self._offset: self._offset + self._size]
+        self._data = self._data[self._offset : self._offset + self._size]
         self._offset = 0
 
     @classmethod
@@ -159,11 +171,12 @@ class StructBase:
         for field_name in self._fields:
             field_data.append(f"    {field_name} = {getattr(self, field_name)}")
         field_str = "\n".join(field_data)
-        return(f"{self.__class__.__name__}:\n{field_str}\n")
+        return f"{self.__class__.__name__}:\n{field_str}\n"
 
 
 def non_reentrant(func):
     depth = 0
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         nonlocal depth
@@ -175,4 +188,5 @@ def non_reentrant(func):
         finally:
             depth -= 1
         return result
+
     return wrapper

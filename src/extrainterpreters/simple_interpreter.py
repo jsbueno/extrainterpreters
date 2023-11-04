@@ -27,7 +27,8 @@ class _BufferedInterpreter(BaseInterpreter):
 
     def _interp_init_code(self):
         code = super()._interp_init_code()
-        code += D(f"""\
+        code += D(
+            f"""\
             import pickle
             import sys
             sys.path[:] = {sys.path}
@@ -57,7 +58,8 @@ class _BufferedInterpreter(BaseInterpreter):
                 _m.close()
                 del _m
 
-        """)
+        """
+        )
         return code
 
     def done(self):
@@ -71,7 +73,9 @@ class _BufferedInterpreter(BaseInterpreter):
         if not self.done():
             raise ValueError("Task not completed in subinterpreter")
         if self.exception:
-            raise ValueError("An exception ocurred in the subinterpreter. Check the `.exception` attribute")
+            raise ValueError(
+                "An exception ocurred in the subinterpreter. Check the `.exception` attribute"
+            )
         if hasattr(self, "_cached_result"):
             return self._cached_result
         self.map.seek(self.buffer.nranges["return_data"])
@@ -156,7 +160,9 @@ class SimpleInterpreter(_BufferedInterpreter):
         """
         kwargs = kwargs or {}
 
-        super().execute(func, args, kwargs) # NOP on the interpreter, but sets internal states.
+        super().execute(
+            func, args, kwargs
+        )  # NOP on the interpreter, but sets internal states.
         self.map[self.buffer.nranges["return_data"]] = 0
         self.exception = None
         try:
@@ -166,7 +172,9 @@ class SimpleInterpreter(_BufferedInterpreter):
 
         revert_main_name = False
         if getattr(func, "__module__", None) == "__main__":
-            if (mod_name:=getattr(mod_name:=sys.modules["__main__"], "__file__", None)):
+            if mod_name := getattr(
+                mod_name := sys.modules["__main__"], "__file__", None
+            ):
                 # changing the module name from "__main__" to its
                 # normal importable name makes functions and
                 # classes on it able to be unpickled on
@@ -185,11 +193,15 @@ class SimpleInterpreter(_BufferedInterpreter):
             except ValueError:
                 _failed = True
             if _failed or self.map.tell() >= self.buffer.range_sizes["send_data"]:
-                raise RuntimeError(D(f"""\
+                raise RuntimeError(
+                    D(
+                        f"""\
                     Payload to subinterpreter larger than payload buffer.
                     Call cancelled. If needed, just make buffer larger by tweaking
                     extrainterpreters' {BFSZ=} value.
-                    """))
+                    """
+                    )
+                )
 
         if revert_main_name:
             mod.__name__ = "__main__"
@@ -200,7 +212,10 @@ class SimpleInterpreter(_BufferedInterpreter):
         except interpreters.RunFailedError as error:
             # self.map[RET_OFFSET] = True
             self.exception = error
-            print(f"Failing code\n {func}(*{args}, **{kwargs})\n, passed as {code}", file=sys.stderr)
+            print(
+                f"Failing code\n {func}(*{args}, **{kwargs})\n, passed as {code}",
+                file=sys.stderr,
+            )
             # implementation still can't reraise the exception on main interpreter
             # error.resolve()
             raise
