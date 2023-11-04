@@ -113,7 +113,7 @@ class SimpleInterpreter(_BufferedInterpreter):
     Pickle is used to translate functions to the subinterpreter - so
     only pickle-able callables can be used.
 
-    This implementation uses a memory area  (by default of 10MB), to send pickled objects back and fort at fixed offsets.
+    This implementation uses a memory area  (by default of 10MB), to send pickled objects back and forth at fixed offsets.
     """
 
     def __init__(self, target=None, args=(), kwargs=None):

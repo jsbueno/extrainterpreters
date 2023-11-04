@@ -56,17 +56,10 @@ class _PipeBase:
     def _read_ready_callback(self, key, *args):
         self._read_ready_flag = True
 
+
     def select(self, timeout=0):
-        start = time.monotonic()
         self._read_ready_flag = False
-        ellapsed = current_ellapsed = 0
-        current_timeout = timeout
-        while not self._read_ready_flag and (timeout is None or ellapsed <= timeout):
-            if timeout is not None:
-                current_timeout -= current_ellapsed
-            EISelector.select(timeout=timeout)
-            current_ellapsed = (now:=time.monotonic()) - ellapsed
-            ellapsed = now - start
+        EISelector.select(timeout=timeout, target_fd=self.reader_fd)
         return self._read_ready_flag
 
     def _write_ready_callback(self, *args):
@@ -74,7 +67,7 @@ class _PipeBase:
 
     def select_for_write(self, timeout=None):
         self._write_ready_flag = False
-        EISelector.select(timeout=timeout)
+        EISelector.select(timeout=timeout, target_fd=self.writer_fd)
         return self._write_ready_flag
 
     def send(self, data, timeout=None):
@@ -344,7 +337,7 @@ class SingleQueue(_ABSQueue):
         self._ready_to_write_flag = True
 
     def _ready_to_send(self, timeout=0):
-        EISelector.select(timeout=timeout)
+        EISelector.select(timeout=timeout, target_fd=self._writing_fd)
         result = self._ready_to_write_flag
         self._ready_to_write_flag = False
         return result

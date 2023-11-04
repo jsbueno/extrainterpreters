@@ -1,9 +1,10 @@
+from datetime import datetime
 from selectors import DefaultSelector
 from types import MethodType
+from weakref import WeakValueDictionary
+import time
 import warnings
 
-from weakref import WeakValueDictionary
-from datetime import datetime
 
 import extrainterpreters
 
@@ -46,8 +47,16 @@ class EISelector:
             new_data = previous_key.data + (callback, )
             self.selector.modify(file, event, new_data)
 
-    def select(self, timeout=None):
-        # call the selector method and calls back any callables in `data` for all given keys
+    def select(self, timeout=None, target_fd=None):
+        """ calls the O.S. selector method and calls back any
+        callables in `data` for all given keys
+
+        The obserbality will end when the first of
+        the registered callbacks for this instance - unless
+        "target_fd" is given, in that case, timeout is
+        respected for that file descritor alone
+
+        """
 
         # mechanism to prevent called callbacks to be re-entered
         # (a callback in a queue can call methods in the associated
@@ -56,22 +65,33 @@ class EISelector:
         self.select_depth += 1
         if self.select_depth == 1:
             self.entered_callbacks = set()
-        x = self.selector.select(timeout)
-        if getattr(extrainterpreters, "DEBUG", False):
-            from . import interpreters
-            if interpreters.get_current() != 0:
-                with open("subinterpreter_select_log", "at") as f:
-                    f.write(f"{datetime.now().isoformat()} - {x}\n\n")
-        for key, events in x:
-            for callback in key.data:
-                if callback not in self.entered_callbacks:
+
+        start_time = time.monotonic()
+        ellapsed = ellapsed_in_step = 0
+        adjusted_timeout = timeout
+        target_fd_reached = False
+        while (target_fd is None or not target_fd_reached) and (timeout is None or ellapsed <= timeout):
+
+            x = self.selector.select(adjusted_timeout)
+
+            for key, events in x:
+                for callback in key.data:
+                    if callback in self.entered_callbacks:
+                        continue
                     self.entered_callbacks.add(callback)
+                    if key.fd == target_fd:
+                        target_fd_reached = True
                     try:
                         callback(key)
                     except Exception as err:
-                        warnings.warn(f"Error in select callback {err}")
+                        warnings.warn(f"Error in select callback {getattr(callback, "__qualname__", callback)}: {err}")
                     finally:
                         self.entered_callbacks.remove(callback)
+            ellapsed_in_step = time.monotonic() - (start_time + ellapsed)
+            ellapsed += ellapsed_in_step
+            if timeout is not None:
+                adjusted_timeout -= ellapsed_in_step
+
         self.select_depth -= 1
 
 
