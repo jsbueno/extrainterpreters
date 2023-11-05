@@ -5,7 +5,7 @@ memoryboard_module = [
     setuptools.Extension(
         'extrainterpreters._memoryboard', sources=['src/extrainterpreters/memoryboard.c'],
         include_dirs=[],
-        extra_compile_args=['-O3', '-march=native'],
+        extra_compile_args=['-O3',],
         language='c'
     )
 ]

@@ -46,7 +46,7 @@ class RemoteDataState:
     read_write = 2
 
 
-TIME_RESOLUTION = 0.002
+TIME_RESOLUTION = sys.getswitchinterval()
 DEFAULT_TIMEOUT = 50 * TIME_RESOLUTION
 DEFAULT_TTL = 3600
 REMOTE_HEADER_SIZE = RemoteHeader._size
