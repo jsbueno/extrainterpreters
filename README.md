@@ -5,7 +5,7 @@ Utilities to make use of new
 
 Status: alpha
 
-Usage: for now one must build cpython 3.12 alpha from the main cpython branch
+Usage: for now one must build cpython 3.12 pre-release build
 
 
 then, just import "extrainterpreters" and use the `Interpreter` class
