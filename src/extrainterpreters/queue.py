@@ -507,16 +507,22 @@ class Queue(_ABSQueue):
         self._data.append(obj)
 
     def get(self, block=True, timeout=None):
-        # FIXME: make timeout/block semantics equal to
-        # what exists for normal queues
-        # (a plain .get() should just block forever until there is data)
         if not block:
+            # Python queue.Queue does not error here, so we don't as well:
+            #if timeout not in (None, 0):
+            #    raise TypeError("Can't specify a timeout with a non-blocking call")
             timeout = 0
-        elif timeout is None:
-            timeout = _DEFAULT_BLOCKING_TIMEOUT
 
-        if self._signal_pipe.select(timeout=timeout):
-            self._fetch()
+        #if not block:
+            #timeout = 0
+        #elif timeout is None:
+            #timeout = _DEFAULT_BLOCKING_TIMEOUT
+        try:
+            if self._signal_pipe.select(timeout=timeout):
+                self._fetch()
+        except TimeoutError:
+            if block:
+                raise
 
         if self._data:
             return self._data.popleft()

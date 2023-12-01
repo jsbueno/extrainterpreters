@@ -10,8 +10,7 @@ from textwrap import dedent as D
 from . import interpreters, BFSZ, running_interpreters
 
 
-_TTL = 0.01
-
+_TTL = sys.getswitchinterval() * 10
 
 class BaseInterpreter:
     def __init__(self):

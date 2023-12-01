@@ -414,3 +414,62 @@ def test_queue_get_is_blocking_by_default_other_interpreter():
                 )
             )
     assert not failed, failed
+
+
+@pytest.mark.skip
+def test_queue_each_value_is_read_in_a_single_interpreter_several_interpreters():
+    # FIXME: this is failing IRL : this test is not deterministic (neither are queue values read in a single interpreter by now)
+    n_interpreters = 20
+    qsource = q = Queue()
+    qreturn = Queue()
+    q_pickle = pickle.dumps(q)
+    q_return_pickle = pickle.dumps(qreturn)
+    interps = []
+    threads = []
+    code = D(
+        f"""\
+        import pickle, time
+        from extrainterpreters import get_current
+        from queue import Empty
+
+        import extrainterpreters
+        extrainterpreters.DEBUG=True
+
+        def func(queue, ret_queue):
+            while True:
+                try:
+                    value = queue.get(timeout=1)
+                except TimeoutError:
+                    break
+                time.sleep(0.05)
+                ret_queue.put((value, id(get_current()))
+
+
+        queue = pickle.loads({q_pickle})
+        ret_queue = pickle.loads({q_return_pickle})
+        func(queue, ret_queue)
+    """
+    )
+    for i in range(n_interpreters):
+        interp = ei.Interpreter().start()
+        interps.append(interp)
+
+        def run(interp):
+            interp.run_string(code)
+
+        threads.append(
+            threading.Thread(target=run, args=(interp,))
+        )
+
+    for i in range(n_interpreters):
+        q.put(i)
+
+    time.sleep(2)
+    while True:
+        try:
+            print(qreturn.get(), timeout=0.02)
+        except TimeoutError:
+            break
+
+    [t.join() for t in threads]
+    [interp.close() for interp in interps]
