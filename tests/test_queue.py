@@ -416,10 +416,9 @@ def test_queue_get_is_blocking_by_default_other_interpreter():
     assert not failed, failed
 
 
-@pytest.mark.skip
 def test_queue_each_value_is_read_in_a_single_interpreter_several_interpreters():
     # FIXME: this is failing IRL : this test is not deterministic (neither are queue values read in a single interpreter by now)
-    n_interpreters = 20
+    n_interpreters = 8
     qsource = q = Queue()
     qreturn = Queue()
     q_pickle = pickle.dumps(q)
@@ -439,10 +438,11 @@ def test_queue_each_value_is_read_in_a_single_interpreter_several_interpreters()
             while True:
                 try:
                     value = queue.get(timeout=1)
+                    # print(value, get_current())
                 except TimeoutError:
                     break
-                time.sleep(0.05)
-                ret_queue.put((value, id(get_current()))
+                time.sleep(0.5)
+                ret_queue.put((value, int(get_current())))
 
 
         queue = pickle.loads({q_pickle})
@@ -458,18 +458,28 @@ def test_queue_each_value_is_read_in_a_single_interpreter_several_interpreters()
             interp.run_string(code)
 
         threads.append(
-            threading.Thread(target=run, args=(interp,))
+            thread:=threading.Thread(target=run, args=(interp,))
         )
+        thread.start()
 
     for i in range(n_interpreters):
         q.put(i)
 
-    time.sleep(2)
+    time.sleep(1)
+    returned_values = list()
+    returned_interps = list()
     while True:
         try:
-            print(qreturn.get(), timeout=0.02)
+            v, interp = qreturn.get(timeout=0.02)
+            returned_values.append(v)
+            returned_interps.append(interp)
         except TimeoutError:
             break
+
+    print ("values: ", sorted(returned_values))
+    print("interps: ", sorted(returned_interps))
+    assert len(set(returned_interps)) == n_interpreters
+    assert len(set(returned_values)) == n_interpreters
 
     [t.join() for t in threads]
     [interp.close() for interp in interps]

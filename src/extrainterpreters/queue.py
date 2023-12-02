@@ -526,7 +526,9 @@ class Queue(_ABSQueue):
 
         if self._data:
             return self._data.popleft()
-        raise threading_queue.Empty()
+        if not block:
+            raise threading_queue.Empty()
+        raise TimeoutError()
 
     def put(self, item, block=True, timeout=None):
         if block and not timeout:
