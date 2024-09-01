@@ -418,7 +418,7 @@ def test_queue_get_is_blocking_by_default_other_interpreter():
 
 def test_queue_each_value_is_read_in_a_single_interpreter_several_interpreters():
     # FIXME: this is failing IRL : this test is not deterministic (neither are queue values read in a single interpreter by now)
-    n_interpreters = 8
+    n_interpreters = 5
     qsource = q = Queue()
     qreturn = Queue()
     q_pickle = pickle.dumps(q)

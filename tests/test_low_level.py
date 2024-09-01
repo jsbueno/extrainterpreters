@@ -87,7 +87,7 @@ def test_atomiclock_locks(lowlevel):
         while not memoryboard._atomic_byte_lock(address):
             time.sleep(0.00005)
         old_counter = counter
-        time.sleep(random.random() % 0.02)
+        time.sleep(random.random() % 0.1)
         counter = old_counter + 1
         buffer[0] = 0
 

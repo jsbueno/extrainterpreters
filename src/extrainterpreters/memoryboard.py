@@ -368,7 +368,7 @@ class RemoteArray:
                 RemoteState.received,
             ):
                 raise RuntimeError(
-                    f"Can not pickle remote buffer in current state (self.header.state)"
+                    f"Can not pickle remote buffer in current state {self.header.state=}"
                 )
         with self._lock:
             if self.header.state == RemoteState.ready:
@@ -388,7 +388,7 @@ class RemoteArray:
         self._timestamp = state["timestamp"]
         self._size = state["buffer_data"][1] - RemoteHeader._size
         # atention: the Lock will use a byte in the buffer, with an independent allocation mechanism.
-        # It is unpickled an ready to use at this point - but we will
+        # It is unpickled and ready to use at this point - but we will
         # just add it to the instance in __enter__ , after other checks
         # take place.
         self._lock = None  # state["_lock"]
