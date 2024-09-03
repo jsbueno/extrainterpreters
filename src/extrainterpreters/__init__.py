@@ -13,17 +13,20 @@ try:
     import interpreters
 except ImportError:
     try:
-        import _xxsubinterpreters as interpreters
+        import _interpreters as interpreters
     except ImportError:
-        raise ImportError(
-            D(
+        try:
+            import _xxsubinterpreters as interpreters
+        except ImportError:
+            raise ImportError(
+                D(
+                    """
+                interpreters module not available in this Python install.
+                If you are early to it (before 3.12 beta), you need to build an up-to-date
+                cPython 3.12 or later.
                 """
-            interpreters module not available in this Python install.
-            If you are early to it (before 3.12 beta), you need to build an up-to-date
-            cPython 3.12 from the git main branch.
-            """
+                )
             )
-        )
 
 
 BFSZ = 10_000_000
