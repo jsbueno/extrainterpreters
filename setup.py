@@ -12,7 +12,7 @@ memoryboard_module = [
 
 setuptools.setup(
     name="extrainterpreters",
-    version="0.2-alpha1",
+    version="0.2-beta1",
     author="João S. O. Bueno",
     author_email="gwidion@gmail.com",
     description="Utilities for concurrent code using subinterpreters",
@@ -26,7 +26,7 @@ setuptools.setup(
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
         "Operating System :: OS Independent",
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
 
     ],

@@ -62,18 +62,26 @@ sub-interpreters).
 The good news is that `pickle` will take care of importing whatever is
 needed on the other side, so that a function can run. 
 
+# API and Usage:
+
+In beta stage the suggestion is to use this as one would `threading.Thread` -
+see the example above - and do not rely on the provided `Queue` class (seriously
+it is broken right now), until some notice about it is given.
+
 # Roadmap
+
+## first the basics:
+    we should get Lock, Rlock, Queue and some of the concurrency primitives
+    as existing for threads, async and subprocessing working - at that point
+    this should be production quality
+
+## second, the bells and whistles
 
 I plan to get this compatible with concurrent.futures.Executor, and have
 an easy way to schedule a subinterpreter function execution as an async task.
 
 Also, I should come up with a Queue object to pass data back and forth.
 As for the data passing mechanism: we will use pickle, no doubt.
-
-## When is Beta?
-
-As soon as I get to a well thought way of creating the initial buffer
-for comunication with a sub-interpreter.
 
 # Architecture
 The initial implementation used a pre-allocated mmaped file
