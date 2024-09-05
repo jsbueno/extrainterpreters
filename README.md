@@ -3,15 +3,56 @@
 Utilities to make use of new 
 "interpreters"  module in Python 3.12
 
-Status: alpha
+Status: beta
 
-Usage: for now one must build cpython 3.12 pre-release build
+Usage: Works with cPython >= 3.12
 
 
-then, just import "extrainterpreters" and use the `Interpreter` class
+Just import "extrainterpreters" and use the `Interpreter` class
 as a wrapper to the subinterpreter represented by a single integer
-handle created by the new `interpreters` module (that should be 
-in Python stdlib as soon as Eric Snow polishes it)
+handle created by the new `interpreters` module:
+
+```python
+import extrainterpreters as ET
+
+import time
+
+def my_function():
+    time.sleep(1)
+    print("running in other interpreter")
+    return 42
+
+interp = ET.Interpreter(target=my_function)
+interp.start()
+print("running in main interpreter")
+time.sleep(1.5)
+print(f"computation result: {interp.result()}")
+
+```
+
+
+
+## history
+PEP 554 Describes a Python interface to make use of Sub-interpreters-
+a long living feature of cPython, but only available through C code
+embedding Python. While approved, the PEP is not in its final form,
+and as of Python 3.13 the `interpreters` module suggested there
+is made available as `_interpreters`. (And before that, in Python
+3.13, it is available as `_xxsubinterpreters`.
+
+With the implementation of PEP 684 before Python 3.12, using
+subinterpreters became a lot more interesting, because
+each subinterpreter now has an independent GIL. This means
+that different interpreters (running in differnet threads)
+can actually execute Python code in parallel in multiple
+CPU cores.
+
+"extrainterpreters" offer a nice API to make use
+of this feature before PEP 554 becomes final, and
+hopefully, will keep offering value as a nice API wrapper
+when it is final. Enjoy!
+
+## forms of use
 
 with an `extrainterpreter.Interpreter` instance, one can call:
 `inter.run(func_name, *args, **kwargs})` to run code there in the same
