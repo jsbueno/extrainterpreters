@@ -29,6 +29,9 @@ except ImportError:
             )
 
 
+__version__ = "0.2-beta2"
+
+
 BFSZ = 10_000_000
 
 running_interpreters = weakref.WeakValueDictionary()

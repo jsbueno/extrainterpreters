@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["extrainterpreters"]
+
+[[tool.setuptools."ext-modules"]]
+name = "extrainterpreters._memoryboard"
+sources = ["src/extrainterpreters/memoryboard.c"]
+extra-compile-args = ["-O3",]
+language = "c"
+
+[tool.setuptools.dynamic]
+version = {attr = "extrainterpreters.__version__"}
+
+[project]
+name = "python-extracontext"
+dynamic = ["version"]
+description = "PEP 554 Subinterpreters usable from Python code"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">= 3.12"
+authors = [{ name = "Joao S. O. Bueno" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+repository = "https://github.com/jsbueno/extrainterpreters"
+
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "pyflakes",
+    "pytest-coverage",
+]
+
+[tool.pytest.ini_options]
+testpaths = "tests"
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = "-v" 
+
+[tool.mypy]
+implicit_reexport = true
