@@ -473,7 +473,7 @@ class BufferBase:
     map: RemoteArray
 
     def close(self):
-        if self.map:
+        if getattr(self, "map", None):
             self.map.close()
             self.map = None
 

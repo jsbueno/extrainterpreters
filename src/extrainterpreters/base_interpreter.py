@@ -20,9 +20,9 @@ class BaseInterpreter:
         self.lock = threading.RLock()
 
     def start(self):
-        if self.intno is not None:
-            raise RuntimeError("Interpreter already started")
         with self.lock:
+            if self.intno is not None:
+                raise RuntimeError("Interpreter already started")
             self.intno = self.id = interpreters.create()
             running_interpreters[self.intno] = self
             self.thread = None
