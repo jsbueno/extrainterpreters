@@ -19,7 +19,7 @@ language = "c"
 version = {attr = "extrainterpreters.__version__"}
 
 [project]
-name = "python-extracontext"
+name = "extrainterpreters"
 dynamic = ["version"]
 description = "PEP 554 Subinterpreters usable from Python code"
 readme = {file = "README.md", content-type = "text/markdown"}

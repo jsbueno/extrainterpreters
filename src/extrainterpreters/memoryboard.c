@@ -126,6 +126,9 @@ _memoryboard_modexec(PyObject *m)
 static PyModuleDef_Slot _memoryboard_slots[] = {
     {Py_mod_exec, _memoryboard_modexec},
     {Py_mod_multiple_interpreters, Py_MOD_PER_INTERPRETER_GIL_SUPPORTED},
+#if PY_VERSION_HEX >= 0x030D0000
+    {Py_mod_gil, Py_MOD_GIL_NOT_USED},
+#endif
     {0, NULL}
 };
 
@@ -156,5 +159,6 @@ static struct PyModuleDef _memoryboard = {
 PyMODINIT_FUNC
 PyInit__memoryboard(void)
 {
-    return PyModuleDef_Init(&_memoryboard);
+    PyObject *m = PyModuleDef_Init(&_memoryboard);
+    return m;
 }
