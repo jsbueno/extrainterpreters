@@ -9,27 +9,27 @@ import sys
 import weakref
 from textwrap import dedent as D
 
+
 try:
-    import interpreters
+    # PEP 734 Python 3.13+
+    import _interpreters as interpreters
 except ImportError:
     try:
-        import _interpreters as interpreters
+        # Draft for PEP 554 - Python 3.12.x
+        import _xxsubinterpreters as interpreters
     except ImportError:
-        try:
-            import _xxsubinterpreters as interpreters
-        except ImportError:
-            raise ImportError(
-                D(
-                    """
-                interpreters module not available in this Python install.
-                If you are early to it (before 3.12 beta), you need to build an up-to-date
-                cPython 3.12 or later.
+        raise ImportError(
+            D(
                 """
-                )
+            interpreters module not available in this Python install.
+            If you are early to it (before 3.12 beta), you need to build an up-to-date
+            cPython 3.12 or later.
+            """
             )
+        )
 
 
-__version__ = "0.2-beta2"
+__version__ = "0.2-beta3"
 
 
 BFSZ = 10_000_000
