@@ -6,6 +6,8 @@ jobs:
   build:
     name: Build distribution 📦
     runs-on: ubuntu-latest
+    environment:
+      name: release
 
     steps:
     - uses: actions/checkout@v4
@@ -22,7 +24,7 @@ jobs:
     - name: Build a binary wheel and a source tarball
       run: python3 -m build
     - name: Store the distribution packages
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: python-package-distributions
         path: dist/
@@ -35,7 +37,7 @@ jobs:
     - build
     runs-on: ubuntu-latest
     environment:
-      name: pypi
+      name: release
       url: https://pypi.org/p/extrainterpreters
     permissions:
       id-token: write  # IMPORTANT: mandatory for trusted publishing
@@ -53,6 +55,8 @@ jobs:
     name: >-
       Sign the Python 🐍 distribution 📦 with Sigstore
       and upload them to GitHub Release
+    environment:
+        name: release
     needs:
     - publish-to-pypi
     runs-on: ubuntu-latest
