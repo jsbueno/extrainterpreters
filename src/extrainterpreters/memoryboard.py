@@ -7,7 +7,7 @@ from functools import wraps
 
 from collections.abc import MutableSequence
 
-from . import interpreters, running_interpreters
+from . import interpreters, running_interpreters, get_current, raw_list_all
 from . import _memoryboard
 from .utils import (
     guard_internal_use,
@@ -267,7 +267,7 @@ class RemoteArray:
         ttl = self._check_ttl()
         if not ttl:
             raise RuntimeError(
-                f"TTL Exceeded trying to use buffer in sub-interpreter {interpreters.get_current()}"
+                f"TTL Exceeded trying to use buffer in sub-interpreter {get_current()}"
             )
         self._data = _remote_memory(*self._internal[:2])
         self._lock = self._internal[2]
@@ -278,7 +278,7 @@ class RemoteArray:
             if not ttl:
                 self._data = None
                 raise RuntimeError(
-                    f"TTL Exceeded trying to use buffer in sub-interpreter {interpreters.get_current()}, (stage 2)"
+                    f"TTL Exceeded trying to use buffer in sub-interpreter {get_current()}, (stage 2)"
                 )
             self._data_state = RemoteDataState.read_write
             if (state := self.header.state) not in (
@@ -466,7 +466,12 @@ class RemoteArray:
 
     def __del__(self):
         if getattr(self, "_data", None) is not None:
-            self.close()
+            try:
+                self.close()
+            except TypeError:
+                # at interpreter shutdown, some of the names needed in "close"
+                # may have been deleted
+                pass
 
 
 class BufferBase:
@@ -546,7 +551,7 @@ class LockableBoard:
         self.map = RemoteArray(size=self._size * BlockLock._size)
         self.map.start()
         self.blocks = {}
-        self._parent_interp = int(interpreters.get_current())
+        self._parent_interp = get_current()
         # This is incremented when a item that "looks good"
         # was originally exported by a interpreter that is closed now.
         # Also, queue.Queue uses and can decrement this to keep
@@ -557,7 +562,7 @@ class LockableBoard:
     def mode(self):
         return (
             _InstMode.parent
-            if interpreters.get_current() == self._parent_interp
+            if get_current() == self._parent_interp
             else _InstMode.child
         )
 
@@ -590,7 +595,7 @@ class LockableBoard:
         offset, control = self.get_free_block()
         control.content_address, control.content_length = data.map._data_for_remote()
         self.blocks[offset] = data
-        control.owner = int(interpreters.get_current())
+        control.owner = get_current()
         control.state = State.ready
         control.lock = 0
         return offset // BlockLock._size, control
@@ -662,6 +667,7 @@ class LockableBoard:
     def fetch_item(self):
         """Atomically retrieves an item posted with "new_item" and frees its block"""
         control = BlockLock._from_data(self.map, 0)
+        interp_list = raw_list_all()
         for index in range(0, self._size):
             offset = index * BlockLock._size
             control._offset = offset
@@ -670,7 +676,7 @@ class LockableBoard:
             lock_ptr = self.map._data_for_remote()[0] + offset + 1
             if not _atomic_byte_lock(lock_ptr):
                 continue
-            if control.owner not in interpreters.list_all():
+            if control.owner not in interp_list:
                 # Counter consumed by queues: they have to fetch
                 # a byte on the notification pipe if an item
                 # vanished due to this.

@@ -19,7 +19,7 @@ from .utils import (
     ResourceBusyError,
 )
 from .memoryboard import LockableBoard, RemoteArray, RemoteState
-from . import interpreters
+from . import interpreters, get_current
 from .resources import EISelector, register_pipe, PIPE_REGISTRY
 
 
@@ -149,7 +149,7 @@ class _SimplexPipe(_PipeBase):
         self.reader_fd, self.writer_fd = self._all_fds = register_pipe(os.pipe(), self)
         super().__init__()
         self._post_init()
-        self._bound_interp = int(interpreters.get_current())
+        self._bound_interp = get_current()
 
     @classmethod
     def _unpickler(cls, reader_fd, writer_fd):
@@ -206,7 +206,7 @@ class _DuplexPipe(_PipeBase):
 
         self._all_fds = self.originator_fds + self.counterpart_fds
         self._post_init()
-        self._bound_interp = int(interpreters.get_current())
+        self._bound_interp = get_current()
 
     # These guys are cute!
     # A Pipe unpickled in another interpreter
@@ -219,7 +219,7 @@ class _DuplexPipe(_PipeBase):
 
     @guard_internal_use
     def __setstate__(self, state):
-        current = interpreters.get_current()
+        current = get_current()
         self.__dict__.update(state)
         if current != state["_bound_interp"]:
             # reverse the direction in child intrepreter
@@ -313,7 +313,7 @@ class SingleQueue(_ABSQueue):
         self.maxsize = maxsize
         self.pipe = _DuplexPipe()
         self.mode = _InstMode.parent
-        self.bound_to_interp = int(interpreters.get_current())
+        self.bound_to_interp = get_current()
         self._size = 0
         self._post_init_parent()
 
@@ -333,7 +333,7 @@ class SingleQueue(_ABSQueue):
         from . import interpreters
 
         self.__dict__.update(state)
-        if self.pipe._bound_interp == interpreters.get_current():
+        if self.pipe._bound_interp == get_current():
             self._post_init_parent()
         else:
             self.mode = _InstMode.child
@@ -449,7 +449,7 @@ class Queue(_ABSQueue):
         self.size = size
         self._buffer = LockableBoard()
         self._signal_pipe = _SimplexPipe()
-        self._parent_interp = int(interpreters.get_current())
+        self._parent_interp = get_current()
         self._post_init()
 
     @property
@@ -465,7 +465,7 @@ class Queue(_ABSQueue):
     def mode(self):
         return (
             _InstMode.parent
-            if interpreters.get_current() == self._parent_interp
+            if get_current() == self._parent_interp
             else _InstMode.child
         )
 

@@ -208,4 +208,3 @@ def test_memoryboard_fetch_from_gone_interpreter_doesnot_crash(lowlevel):
     )
     interp.close()
     assert board.fetch_item() is None
-    pass

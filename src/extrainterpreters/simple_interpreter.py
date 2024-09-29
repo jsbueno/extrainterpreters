@@ -208,7 +208,7 @@ class SimpleInterpreter(_BufferedInterpreter):
 
         code = f"""_call({self.buffer.nranges["send_data"]})"""
         try:
-            interpreters.run_string(self.intno, code)
+            error_result = interpreters.run_string(self.intno, code)
         except interpreters.RunFailedError as error:
             # self.map[RET_OFFSET] = True
             self.exception = error
@@ -219,6 +219,11 @@ class SimpleInterpreter(_BufferedInterpreter):
             # implementation still can't reraise the exception on main interpreter
             # error.resolve()
             raise
+        if error_result:
+            # Python 3.13
+            self.exception = error_result
+            # TODO: improve this
+            raise RuntimeError(error_result)
 
     def close(self, *args):
         if self.done():

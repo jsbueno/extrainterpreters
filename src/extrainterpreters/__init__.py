@@ -29,6 +29,8 @@ except ImportError:
         )
 
 
+# Early declarations to avoid circular imports:
+
 __version__ = "0.2-beta3"
 
 
@@ -45,14 +47,28 @@ RootInterpProxy = RootInterpProxy()
 
 running_interpreters[0] = RootInterpProxy
 
+def get_current():
+    id_ = interpreters.get_current()
+    return int(id_) if not isinstance(id_, tuple) else id_[0]
+
+
+def raw_list_all():
+    # .list_all changed to return tuples between Python 3.12 and 3.13
+    ids = interpreters.list_all()
+    if not isinstance(ids[0], tuple):
+        return ids
+    return [tuple_id[0] for tuple_id in interpreters.list_all()]
+
+if not hasattr(interpreters, "RunFailedError"):
+    # exception was removed in Python 3.13, but we need to
+    # have it present in some except clauses while  3.12 is supported:
+    interpreters.RunFailedError = RuntimeError
+
 from .utils import ResourceBusyError
 from .memoryboard import ProcessBuffer, RemoteArray
 from .base_interpreter import BaseInterpreter
 from .queue import SingleQueue, Queue
 from .simple_interpreter import SimpleInterpreter as Interpreter
-
-
-get_current = interpreters.get_current
 
 
 def list_all():

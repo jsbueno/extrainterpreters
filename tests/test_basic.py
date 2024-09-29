@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 import extrainterpreters
-from extrainterpreters import interpreters
+from extrainterpreters import interpreters, raw_list_all
 
 
 def test_running_plain_call_works():
@@ -17,9 +17,9 @@ def test_running_plain_call_works():
 def test_interpreter_is_destroyed_after_context_exits():
     with extrainterpreters.Interpreter() as interp:
         intno = interp.intno
-        assert intno in interpreters.list_all()
+        assert intno in raw_list_all()
 
-    assert intno not in interpreters.list_all()
+    assert intno not in raw_list_all()
 
 
 def test_extrainterpreters_list_all():
@@ -37,10 +37,10 @@ def test_interpreter_closes_out_of_scope():
         nonlocal intno
         interp = extrainterpreters.Interpreter().start()
         intno = interp.intno
-        assert intno in interpreters.list_all()
+        assert intno in raw_list_all()
 
     inner()
-    assert intno not in interpreters.list_all()
+    assert intno not in raw_list_all()
 
 
 def test_interpreter_cant_be_started_twice():
