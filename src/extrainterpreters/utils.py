@@ -31,6 +31,13 @@ def guard_internal_use(func):
     return wrapper
 
 
+from ._memoryboard import _remote_memory, _address_and_size, _atomic_byte_lock
+
+_remote_memory = guard_internal_use(_remote_memory)
+_address_and_size = guard_internal_use(_address_and_size)
+_atomic_byte_lock = guard_internal_use(_atomic_byte_lock)
+
+
 class clsproperty:
     def __init__(self, method):
         self.method = method
