@@ -59,6 +59,7 @@ class _CrossInterpreterStructLock:
             while time.time() <= threshold:
                 if _atomic_byte_lock(self._lock_address):
                     break
+                time.sleep(TIME_RESOLUTION * 4)
             else:
                 self._timeout = self._original_timeout
                 raise TimeoutError("Timeout trying to acquire lock")
@@ -104,13 +105,25 @@ class IntRLock:
         self._lock = _CrossInterpreterStructLock(lock_str)
 
     def acquire(self, blocking=True, timeout=-1):
-        pass
+        timeout = None if timeout == -1 or not blocking else timeout
+        self._lock.timeout(timeout)
+        self._lock.__enter__()
+        return
 
     def release(self):
-        pass
+        self._lock.__exit__()
+
+    def __enter__(self):
+        self.acquire()
+        #self._lock.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        self.release()
+        #self._lock.__exit__()
 
     def locked(self):
-        return False
+        return bool(self._lock._entered)
 
     def __getstate__(self):
         return {"_lock": self._lock}
