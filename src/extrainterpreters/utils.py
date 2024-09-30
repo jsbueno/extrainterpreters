@@ -123,7 +123,7 @@ class StructBase:
 
     def __init__(self, **kwargs):
         self._offset = 0
-        self._data = bytearray(b"\x00" * self._size)
+        self._data = bytearray(self._size)
         for field_name in self._fields:
             setattr(self, field_name, kwargs.pop(field_name))
         if kwargs:

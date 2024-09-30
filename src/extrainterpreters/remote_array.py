@@ -22,7 +22,6 @@ from .utils import (
     guard_internal_use
 )
 
-from .lock import _CrossInterpreterStructLock
 
 class RemoteState:
     building = 0
@@ -61,7 +60,7 @@ def _collector(action, data):
     """Garbage Collector "plug-in":
 
     when a RemoteBuffer is closed in parent interpreter
-    earlier than it is exist in sub-interpreters,
+    earlier than it is exited in sub-interpreters,
     it is decomissioned and put in "_array_registry".
 
     This function will be called when the garbage collector
@@ -127,11 +126,6 @@ class RemoteArray:
             - call __exit__
 
         - suggested default TTL: 1 seconds
-
-        - check for the possibility of a GC hook (gc.callbacks list)
-            - if possible, iterate all "pending deletion" and check conditions in "__exit__"
-            - if no GC hook possible,think of another reasonable mechanism to periodically try to delete pending deletion buffers. (dedicate thread with one check per second? Less frequent?
-
     """
     __slots__ = (
         "_cursor",
@@ -147,10 +141,11 @@ class RemoteArray:
     )
 
     def __init__(self, *, size=None, payload=None, ttl=DEFAULT_TTL):
+        from .lock import _CrossInterpreterStructLock  # avoid circular imports, the easy way.
         if size is None and payload is not None:
             size = len(payload)
         self._size = size
-        self._data = bytearray(b"\x00" * (size + REMOTE_HEADER_SIZE))
+        self._data = bytearray(size + REMOTE_HEADER_SIZE)
         if payload:
             # TBD: Temporary thing - we are allowing zero-copy buffers soon
             self._data[REMOTE_HEADER_SIZE:] = payload

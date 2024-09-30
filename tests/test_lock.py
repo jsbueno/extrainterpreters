@@ -40,28 +40,32 @@ def test_lock_cant_be_reacquired():
 
 
 @pytest.mark.parametrize("LockCls", [Lock, RLock, IntRLock])
-def test_locks_cant_be_passed_to_other_interpreter(LockCls):
+def test_locks_can_be_passed_to_other_interpreter(LockCls, lowlevel):
     lock = LockCls()
+    lock_data = ei.utils._remote_memory(lock._lock._lock_address, 1)
     interp = ei.Interpreter().start()
     interp.run_string(
         D(
             f"""
-            import extrainterpreters; extrainterpreters.DEBUG=True
+            import extrainterpreters as ei; ei.DEBUG=True
             lock = pickle.loads({pickle.dumps(lock)})
-            assert lock._lock._data == 0
+            lock_data = ei.utils._remote_memory(lock._lock._lock_address, 1)
+            assert lock_data[0] == 0
             """
-        )
+        ),
+        raise_=True
     )
-    lock._lock._data[0] = 2
+    lock_data[0] = 2
     interp.run_string(
         D(
             """
-            assert lock._lock._data[0] == 2
-            lock._lock._data[0] = 5
+            assert lock_data[0] == 2
+            lock_data[0] = 5
             """
-        )
+        ),
+        raise_=True
     )
-    assert lock._lock._data[0] == 5
+    assert lock_data[0] == 5
     interp.close()
 
 

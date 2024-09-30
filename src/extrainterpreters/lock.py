@@ -4,6 +4,7 @@ import sys
 
 from . import running_interpreters
 
+from .remote_array import RemoteArray
 from .utils import (
     _atomic_byte_lock,
     _remote_memory,
@@ -95,7 +96,12 @@ class IntRLock:
     """
 
     def __init__(self):
-        self._lock = _LockBuffer(lock=0)
+        self._buffer = bytearray(1)
+        # prevents buffer from being moved around by Python allocators
+        self._anchor = memoryview(self._buffer)
+
+        lock_str = _LockBuffer._from_data(self._buffer)
+        self._lock = _CrossInterpreterStructLock(lock_str)
 
     def acquire(self, blocking=True, timeout=-1):
         pass
@@ -105,6 +111,10 @@ class IntRLock:
 
     def locked(self):
         return False
+
+    def __getstate__(self):
+        return {"_lock": self._lock}
+
 
 
 class RLock(IntRLock):
