@@ -1,3 +1,4 @@
+from threading import TIMEOUT_MAX
 import time
 import sys
 
@@ -105,10 +106,18 @@ class IntRLock:
         self._lock = _CrossInterpreterStructLock(lock_str)
 
     def acquire(self, blocking=True, timeout=-1):
-        timeout = None if timeout == -1 or not blocking else timeout
-        self._lock.timeout(timeout)
-        self._lock.__enter__()
-        return
+        if blocking:
+            timeout = TIMEOUT_MAX if timeout == -1 or not blocking else timeout
+            self._lock.timeout(timeout)
+            self._lock.__enter__()
+            return
+        else:
+            self._lock.timeout(None)
+            try:
+                self._lock.__enter__()
+            except ResourceBusyError:
+                return False
+            return True
 
     def release(self):
         self._lock.__exit__()
@@ -143,4 +152,8 @@ class RLock(IntRLock):
 
 
 class Lock(IntRLock):
-    pass
+    ...
+    #def acquire(self, blocking=True, timeout=-1):
+        #if self.locked():
+            #if not blocking or timeout == -1:
+
