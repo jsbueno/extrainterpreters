@@ -33,10 +33,9 @@ def test_locks_work_as_context_manager(LockCls):
 def test_lock_cant_be_reacquired_same_interpreter():
     lock = Lock()
 
-    lock.acquire()
+    assert lock.acquire()
 
-    with pytest.raises(TimeoutError):
-        lock.acquire(timeout=0)
+    assert not lock.acquire(blocking=False)
 
 @pytest.mark.skip("to be implemented")
 def test_lock_cant_be_reacquired_other_interpreter():
