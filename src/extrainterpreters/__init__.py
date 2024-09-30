@@ -69,6 +69,7 @@ from .memoryboard import ProcessBuffer, RemoteArray
 from .base_interpreter import BaseInterpreter
 from .queue import SingleQueue, Queue
 from .simple_interpreter import SimpleInterpreter as Interpreter
+from .lock import Lock, RLock
 
 
 def list_all():

@@ -1,55 +1,26 @@
-import os
-import pickle
-import threading
 import time
 import sys
-from functools import wraps
 
-from collections.abc import MutableSequence
 
-from . import interpreters, running_interpreters, get_current, raw_list_all
-from . import _memoryboard
+from . import running_interpreters
+
 from .utils import (
+    _atomic_byte_lock,
+    _remote_memory,
+    _address_and_size,
     guard_internal_use,
     Field,
-    DoubleField,
     StructBase,
-    _InstMode,
     ResourceBusyError,
 )
 
-from ._memoryboard import _remote_memory, _address_and_size, _atomic_byte_lock
-
-_remote_memory = guard_internal_use(_remote_memory)
-_address_and_size = guard_internal_use(_address_and_size)
-_atomic_byte_lock = guard_internal_use(_atomic_byte_lock)
-
-
-class RemoteState:
-    building = 0
-    ready = 1
-    serialized = 2
-    received = 2
-    garbage = 3
-
-
-class RemoteHeader(StructBase):
+class _LockBuffer(StructBase):
     lock = Field(1)
-    state = Field(1)
-    enter_count = Field(3)
-    exit_count = Field(3)
-
-
-class RemoteDataState:
-    not_ready = 0
-    read_only = 1  # not used for now.
-    read_write = 2
-
 
 TIME_RESOLUTION = sys.getswitchinterval()
 DEFAULT_TIMEOUT = 50 * TIME_RESOLUTION
 DEFAULT_TTL = 3600
-REMOTE_HEADER_SIZE = RemoteHeader._size
+LOCK_BUFFER_SIZE = _LockBuffer._size
 
 
 class _CrossInterpreterStructLock:
@@ -73,6 +44,8 @@ class _CrossInterpreterStructLock:
         return self
 
     def __enter__(self):
+        # Remember: all attributes are "interpreter-local"
+        # just the bytes in the passed in struct are shared.
         if self._entered:
             self._entered += 1
             return self
@@ -108,3 +81,43 @@ class _CrossInterpreterStructLock:
         state["_entered"] = False
         return state
 
+
+class IntRLock:
+    """Cross Interpreter re-entrant lock
+
+    This will allow re-entrant acquires in the same
+    interpreter, _even_ if it is being acquired
+    in another thread in the same interpreter.
+
+    It should not be very useful - but
+    the implementation path code leads here. Prefer the public
+    "RLock" and "Lock" classes to avoid surprises.
+    """
+
+    def __init__(self):
+        self._lock = _LockBuffer(lock=0)
+
+    def acquire(self, blocking=True, timeout=-1):
+        pass
+
+    def release(self):
+        pass
+
+    def locked(self):
+        return False
+
+
+class RLock(IntRLock):
+    """Cross interpreter re-entrant lock, analogous to
+    threading.RLock
+    https://docs.python.org/3/library/threading.html#rlock-objects
+
+    More specifically: it will allow re-entrancy in
+    _the same thread_ and _same interpreter_ -
+    a different thread in  the same interpreter will still
+    be blocked out.
+    """
+
+
+class Lock(IntRLock):
+    pass
