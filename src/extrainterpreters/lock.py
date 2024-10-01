@@ -147,13 +147,11 @@ class IntRLock:
     def acquire(self, blocking=True, timeout=-1):
         if blocking:
             timeout = TIMEOUT_MAX if timeout == -1 or not blocking else timeout
-            self._lock.timeout(timeout)
-            self._lock.__enter__()
+            self._lock.acquire(timeout)
             return True
         else:
-            self._lock.timeout(None)
             try:
-                self._lock.__enter__()
+                self._lock.acquire(None)
             except ResourceBusyError:
                 return False
             return True

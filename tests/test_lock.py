@@ -1,4 +1,6 @@
 import pickle
+import threading
+import time
 from functools import partial
 from textwrap import dedent as D
 
@@ -69,6 +71,32 @@ def test_lock_cant_be_reacquired_other_interpreter(interpreter):
     lock.release()
     run (f"assert lock.acquire(blocking=False)")
     run (f"lock.release()")
+
+
+
+def test_lock_works_across_threads_in_same_interpreter():
+    lock = Lock()
+    results = []
+    def aux1():
+        # assert code does't work in nested functions
+        results.append((lock.acquire(blocking=False), "aux1 - first lock, should work"))
+        time.sleep(0.1)
+        lock.release()
+    def aux2():
+        time.sleep(0.025)
+        results.append((not lock.acquire(blocking=False), "aux2 - first lock, should fail"))
+        time.sleep(0.085)
+        results.append((lock.acquire(blocking=False), "aux2 - second lock, should work"))
+        if lock.locked():
+            lock.release()
+    t1 = threading.Thread(target=aux1)
+    t2 = threading.Thread(target=aux2)
+    t1.start(); t2.start()
+
+    t1.join(); t2.join()
+
+    for status, message in results:
+        assert status, message
 
 
 @pytest.mark.parametrize("LockCls", [Lock, RLock, IntRLock])
