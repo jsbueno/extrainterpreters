@@ -45,7 +45,10 @@ class _CrossInterpreterStructLock:
     """
 
     def __init__(self, struct, timeout=DEFAULT_TIMEOUT):
-        buffer_ptr, size = _address_and_size(struct._data)  # , struct._offset)
+        if isinstance(struct._data, RemoteArray):
+            buffer_ptr, size = struct._data._data_for_remote()
+        else:  # bytes, bytearray
+            buffer_ptr, size = _address_and_size(struct._data)  # , struct._offset)
         # struct_ptr = buffer_ptr + struct._offset
         lock_offset = struct._offset + struct._get_offset_for_field("lock")
         if lock_offset >= size:
@@ -105,7 +108,7 @@ class _CrossInterpreterStructLock:
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        state["_entered"] = False
+        state["_entered"] = 0
         return state
 
 
@@ -122,9 +125,21 @@ class IntRLock:
     """
 
     def __init__(self):
-        self._buffer = bytearray(1)
-        # prevents buffer from being moved around by Python allocators
-        self._anchor = memoryview(self._buffer)
+
+        # RemoteArray is a somewhat high-level data structure,
+        # which includes another byte for a lock - just
+        # to take account of the buffer life-cycle
+        # across interpreters.
+
+        # unfortunatelly, I got no simpler mechanism than that
+        # to resolve the problem of the Lock object, along
+        # with the buffer being deleted in its owner interpreter
+        # while alive in a scondary one.
+        # (Remotearrays will go to a parking area, waiting until they
+        # are dereferenced remotely before freeing the memory)
+
+        self._buffer = RemoteArray(size=1)
+        self._buffer._enter_parent()
 
         lock_str = _LockBuffer._from_data(self._buffer)
         self._lock = _CrossInterpreterStructLock(lock_str)
@@ -156,10 +171,17 @@ class IntRLock:
         #self._lock.__exit__()
 
     def locked(self):
-        return bool(self._lock._entered)
+        if self._lock._entered:
+            return True
+        try:
+            self._lock.acquire(0)
+        except ResourceBusyError:
+            return True
+        self._lock.release()
+        return False
 
     def __getstate__(self):
-        return {"_lock": self._lock}
+        return {"_lock": self._lock, "_buffer": self._buffer}
 
 
 

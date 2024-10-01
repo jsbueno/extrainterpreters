@@ -1,4 +1,5 @@
 import pickle
+from functools import partial
 from textwrap import dedent as D
 
 
@@ -9,6 +10,21 @@ import extrainterpreters as ei
 
 from extrainterpreters import Lock, RLock
 from extrainterpreters.lock import IntRLock
+
+
+@pytest.fixture
+def interpreter(lowlevel):
+    interp = ei.Interpreter().start()
+    interp.run_string(
+        D(
+            f"""
+            import extrainterpreters as ei; ei.DEBUG=True
+            """
+        ),
+        raise_=True
+    )
+    yield interp
+    interp.close()
 
 @pytest.mark.parametrize("LockCls", [Lock, RLock, IntRLock])
 def test_locks_are_acquireable(LockCls):
@@ -37,25 +53,31 @@ def test_lock_cant_be_reacquired_same_interpreter():
 
     assert not lock.acquire(blocking=False)
 
-@pytest.mark.skip("to be implemented")
-def test_lock_cant_be_reacquired_other_interpreter():
+
+def test_lock_cant_be_reacquired_other_interpreter(interpreter):
     lock = Lock()
-
-    lock.acquire()
-
-    with pytest.raises(TimeoutError):
-        lock.acquire(timeout=0)
+    # some assertion lasagna -
+    # just checks basic toggling - no race conditions tested here:
+    run = partial(interpreter.run_string, raise_=True)
+    run(f"lock = pickle.loads({pickle.dumps(lock)})")
+    run (f"assert lock.acquire(blocking=False)")
+    assert not lock.acquire(blocking=False)
+    run (f"assert not lock.acquire(blocking=False)")
+    run (f"lock.release()")
+    assert lock.acquire(blocking=False)
+    run (f"assert not lock.acquire(blocking=False)")
+    lock.release()
+    run (f"assert lock.acquire(blocking=False)")
+    run (f"lock.release()")
 
 
 @pytest.mark.parametrize("LockCls", [Lock, RLock, IntRLock])
-def test_locks_can_be_passed_to_other_interpreter(LockCls, lowlevel):
+def test_locks_can_be_passed_to_other_interpreter(LockCls, interpreter):
     lock = LockCls()
     lock_data = ei.utils._remote_memory(lock._lock._lock_address, 1)
-    interp = ei.Interpreter().start()
-    interp.run_string(
+    interpreter.run_string(
         D(
             f"""
-            import extrainterpreters as ei; ei.DEBUG=True
             lock = pickle.loads({pickle.dumps(lock)})
             lock_data = ei.utils._remote_memory(lock._lock._lock_address, 1)
             assert lock_data[0] == 0
@@ -64,7 +86,7 @@ def test_locks_can_be_passed_to_other_interpreter(LockCls, lowlevel):
         raise_=True
     )
     lock_data[0] = 2
-    interp.run_string(
+    interpreter.run_string(
         D(
             """
             assert lock_data[0] == 2
@@ -74,7 +96,6 @@ def test_locks_can_be_passed_to_other_interpreter(LockCls, lowlevel):
         raise_=True
     )
     assert lock_data[0] == 5
-    interp.close()
 
 
 #@pytest.mark.parametrize("LockCls", [Lock, RLock, IntRLock])
