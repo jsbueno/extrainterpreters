@@ -43,7 +43,7 @@ is made available as `_interpreters`. (And before that, in Python
 With the implementation of PEP 684 before Python 3.12, using
 subinterpreters became a lot more interesting, because
 each subinterpreter now has an independent GIL. This means
-that different interpreters (running in differnet threads)
+that different interpreters (running in different threads)
 can actually execute Python code in parallel in multiple
 CPU cores.
 
