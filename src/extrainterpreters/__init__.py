@@ -31,7 +31,7 @@ except ImportError:
 
 # Early declarations to avoid circular imports:
 
-__version__ = "0.2-beta3"
+__version__ = "0.2.0"
 
 
 BFSZ = 10_000_000
