@@ -4,30 +4,32 @@ on: push
 
 jobs:
   build:
-    name: Build distribution 📦
     runs-on: ubuntu-latest
-    environment:
-      name: release
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-    - name: Install pypa/build
-      run: >-
-        python3 -m
-        pip install
-        build
-        --user
-    - name: Build a binary wheel and a source tarball
-      run: python3 -m build
-    - name: Store the distribution packages
-      uses: actions/upload-artifact@v4
-      with:
-        name: python-package-distributions
-        path: dist/
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python versions
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel==2.14.1
+
+      - name: Build wheels
+        env:
+          CIBW_BUILD: "cp312-* cp313-*"
+          CIBW_SKIP: "pp*"
+          CIBW_PLATFORM: "manylinux2014_x86_64" # Adjust if needed
+        run: |
+          python -m cibuildwheel --output-dir dist
+
+      - name: Upload built wheels as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-wheels
+          path: dist
 
   publish-to-pypi:
     name: >-
