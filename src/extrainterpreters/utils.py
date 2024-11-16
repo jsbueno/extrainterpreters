@@ -31,6 +31,13 @@ def guard_internal_use(func):
     return wrapper
 
 
+from ._memoryboard import _remote_memory, _address_and_size, _atomic_byte_lock
+
+_remote_memory = guard_internal_use(_remote_memory)
+_address_and_size = guard_internal_use(_address_and_size)
+_atomic_byte_lock = guard_internal_use(_atomic_byte_lock)
+
+
 class clsproperty:
     def __init__(self, method):
         self.method = method
@@ -116,7 +123,7 @@ class StructBase:
 
     def __init__(self, **kwargs):
         self._offset = 0
-        self._data = bytearray(b"\x00" * self._size)
+        self._data = bytearray(self._size)
         for field_name in self._fields:
             setattr(self, field_name, kwargs.pop(field_name))
         if kwargs:
@@ -136,14 +143,6 @@ class StructBase:
         for k, v in cls.__dict__.items():
             if isinstance(v, RawField):
                 yield k
-
-    @classmethod
-    def _from_values(cls, *args):
-        data = bytearray(b"\x00" * cls._size)
-        self = cls(data, 0)
-        for arg, field_name in zip(args, self._fields):
-            setattr(self, field_name, arg)
-        return self
 
     @property
     def _bytes(self):
@@ -165,6 +164,14 @@ class StructBase:
     def _get_offset_for_field(cls, field_name):
         field = getattr(cls, field_name)
         return field._calc_offset(cls)
+
+    def _push_to(self, data, offset=0):
+        """Paste struct data into a new buffer given by data, offset
+
+        Returns a new instance pointing to the data in the new copy.
+        """
+        data[offset: offset + self._size] = self._bytes
+        return self._from_data(data, offset)
 
     def __repr__(self):
         field_data = []

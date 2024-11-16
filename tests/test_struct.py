@@ -65,6 +65,18 @@ def test_struct_from_values():
     assert s.data_offset == 1000
     assert s.length == 2_000_000
 
+def test_struct_push_to():
+    class Struct(StructBase):
+        data_offset = Field(2)
+        length = Field(4)
+
+    s = Struct(data_offset=1000, length=2_000_000)
+
+    data = bytearray(Struct._size)
+    n = s._push_to(data, 0)
+    assert n.data_offset == 1000
+    assert n.length == 2_000_000
+
 
 def test_struct_bytes():
     class Struct(StructBase):

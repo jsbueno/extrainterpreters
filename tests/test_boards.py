@@ -8,9 +8,11 @@ from extrainterpreters.memoryboard import (
     _CrossInterpreterStructLock,
     RemoteArray,
 )
-from extrainterpreters import memoryboard
-from extrainterpreters.utils import StructBase, Field
+from extrainterpreters.remote_array import RemoteArray, RemoteDataState, RemoteState
 from extrainterpreters import Interpreter
+from extrainterpreters import memoryboard
+from extrainterpreters import remote_array
+from extrainterpreters.utils import StructBase, Field
 
 import extrainterpreters as ei
 
@@ -128,60 +130,64 @@ def test_structlock_timeout_is_restored_on_acquire_fail(lockable, set_timeout):
 
 def test_remotearray_base():
     # temp work around: other tests are leaking interpreters and boards!
-    xx = memoryboard._array_registry
-    memoryboard._array_registry = []
-    buffer = RemoteArray(size=2048, ttl=0.05)
-    assert buffer.header.state == memoryboard.RemoteState.building
-    with buffer:
-        assert buffer.header.state == memoryboard.RemoteState.ready
-        serialized = pickle.dumps(buffer)
-        assert buffer.header.state == memoryboard.RemoteState.serialized
-        new_buffer = pickle.loads(serialized)
-        assert buffer.header.state == memoryboard.RemoteState.serialized
-        with new_buffer:
-            assert buffer.header.state == memoryboard.RemoteState.received
+    xx = remote_array._array_registry
+    try:
+        remote_array._array_registry = []
+        buffer = RemoteArray(size=2048, ttl=0.05)
+        assert buffer.header.state == RemoteState.building
+        with buffer:
+            assert buffer.header.state == RemoteState.ready
+            serialized = pickle.dumps(buffer)
+            assert buffer.header.state == RemoteState.serialized
+            new_buffer = pickle.loads(serialized)
+            assert buffer.header.state == RemoteState.serialized
+            with new_buffer:
+                assert buffer.header.state == RemoteState.received
 
-            new_buffer[0] = 255
+                new_buffer[0] = 255
 
-            assert buffer.header.enter_count == 1
-            assert buffer.header.exit_count == 0
-        with pytest.raises(RuntimeError):
-            new_buffer[0] = 128
-        assert buffer.header.exit_count == 1
-        assert buffer[0] == 255
-        time.sleep(buffer._ttl * 1.1)
-    assert buffer._data is None
-    assert len(memoryboard._array_registry) == 0
-    memoryboard._array_registry = xx
+                assert buffer.header.enter_count == 1
+                assert buffer.header.exit_count == 0
+            with pytest.raises(RuntimeError):
+                new_buffer[0] = 128
+            assert buffer.header.exit_count == 1
+            assert buffer[0] == 255
+            time.sleep(buffer._ttl * 1.1)
+        assert buffer._data is None
+        assert len(remote_array._array_registry) == 0
+    finally:
+        remote_array._array_registry = xx
 
 
 def test_remotearray_not_deleted_before_ttl_expires():
-    xx = memoryboard._array_registry
-    memoryboard._array_registry = []
     import gc
+    xx = remote_array._array_registry
+    try:
+        remote_array._array_registry = []
 
-    buffer = RemoteArray(size=2048, ttl=0.1)
-    assert buffer.header.state == memoryboard.RemoteState.building
-    with buffer:
-        serialized = pickle.dumps(buffer)
-        new_buffer = pickle.loads(serialized)
-        with new_buffer:
-            pass
-        assert buffer.header.exit_count == 1
-        original_data = buffer._data
-        gc.disable()
-    assert buffer._data is None
-    assert buffer._data_state == memoryboard.RemoteDataState.not_ready
-    assert len(memoryboard._array_registry) == 1
-    dead = memoryboard._array_registry[0]
-    assert dead._data is original_data
+        buffer = RemoteArray(size=2048, ttl=0.1)
+        assert buffer.header.state == RemoteState.building
+        with buffer:
+            serialized = pickle.dumps(buffer)
+            new_buffer = pickle.loads(serialized)
+            with new_buffer:
+                pass
+            assert buffer.header.exit_count == 1
+            original_data = buffer._data
+            gc.disable()
+        assert buffer._data is None
+        assert buffer._data_state == RemoteDataState.not_ready
+        assert len(remote_array._array_registry) == 1
+        dead = remote_array._array_registry[0]
+        assert dead._data is original_data
 
-    gc.enable()
+        gc.enable()
 
-    time.sleep(buffer._ttl * 1.1)
-    gc.collect()
-    assert len(memoryboard._array_registry) == 0
-    memoryboard._array_registry = xx
+        time.sleep(buffer._ttl * 1.1)
+        gc.collect()
+        assert len(remote_array._array_registry) == 0
+    finally:
+        remote_array._array_registry = xx
 
 
 def test_memoryboard_fetch_from_gone_interpreter_doesnot_crash(lowlevel):

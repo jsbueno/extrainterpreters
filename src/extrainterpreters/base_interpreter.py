@@ -162,12 +162,17 @@ class BaseInterpreter:
                 )
             )
 
-    def run_string(self, code):
+    def run_string(self, code, raise_=False):
         """Execs a string of code in associated interpreter
 
         Mostly to mirror interpreters.run_string as a convenient method.
         """
-        return interpreters.run_string(self.intno, code)
+        result = interpreters.run_string(self.intno, code)
+        if result and raise_:
+            # In Python 3.13+ indicates an exception occured.
+            # (in Python 3.12, an exception is raised immediatelly)
+            raise RuntimeError(result)
+        return result
 
     #  currently not working. will raise when the interpreter is destroyed:
     # def is_running(self):

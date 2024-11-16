@@ -31,7 +31,7 @@ except ImportError:
 
 # Early declarations to avoid circular imports:
 
-__version__ = "0.2-beta3"
+__version__ = "0.2.0"
 
 
 BFSZ = 10_000_000
@@ -69,6 +69,7 @@ from .memoryboard import ProcessBuffer, RemoteArray
 from .base_interpreter import BaseInterpreter
 from .queue import SingleQueue, Queue
 from .simple_interpreter import SimpleInterpreter as Interpreter
+from .lock import Lock, RLock
 
 
 def list_all():

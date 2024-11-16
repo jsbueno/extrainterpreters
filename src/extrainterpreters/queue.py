@@ -18,7 +18,8 @@ from .utils import (
     non_reentrant,
     ResourceBusyError,
 )
-from .memoryboard import LockableBoard, RemoteArray, RemoteState
+from .remote_array import RemoteArray, RemoteState
+from .memoryboard import LockableBoard
 from . import interpreters, get_current
 from .resources import EISelector, register_pipe, PIPE_REGISTRY
 
