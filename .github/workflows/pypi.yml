@@ -1,11 +1,11 @@
 name: Publish Python 🐍 distribution 📦 to PyPI and TestPyPI
 
 on: push
-name: Build
+name: publish
 
 
 jobs:
-  build_wheels:
+  build:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
