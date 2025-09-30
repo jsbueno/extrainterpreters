@@ -8,6 +8,26 @@ Status: beta
 Usage: Works with cPython >= 3.12
 
 
+This was made available in 2023 as Python 3.12 came out
+to allow some experiments and sending objects back and 
+forth subinterpreters.
+
+As of the release of Python 3.14, `concurrent.interpreters` is
+made a public API, and is capable of several of the things this
+project could do - check https://docs.python.org/3.14/library/concurrent.interpreters.html 
+
+Right now I am not updating this project - it maybe that I return to it at some point,
+but really, since free-threading has become am option, I am having
+a hardtime finding out where a pure Python project could effectively
+make use of multiple interpreters.
+
+Still, at the eve of Python 3.14, I am issuing an small update
+so that the API as avaliable up to Python 3.13 is imported
+from the right place, and the structures in this project work.
+
+
+## Usage
+
 Just import "extrainterpreters" and use the `Interpreter` class
 as a wrapper to the subinterpreter represented by a single integer
 handle created by the new `interpreters` module:

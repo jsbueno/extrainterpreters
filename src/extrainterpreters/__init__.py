@@ -9,32 +9,38 @@ import sys
 import weakref
 from textwrap import dedent as D
 
-
 try:
-    # PEP 734 Python 3.13+
-    import _interpreters as interpreters
+    # Python 3.14+
+    from concurrent.interpreters import _interpreters as interpreters
 except ImportError:
+
     try:
-        # Draft for PEP 554 - Python 3.12.x
-        import _xxsubinterpreters as interpreters
+        # PEP 734 Python 3.13+
+        import _interpreters as interpreters
     except ImportError:
-        raise ImportError(
-            D(
+        try:
+            # Draft for PEP 554 - Python 3.12.x
+            import _xxsubinterpreters as interpreters
+        except ImportError:
+            raise ImportError(
+                D(
+                    """
+                interpreters module not available in this Python install.
+                If you are early to it (before 3.12 beta), you need to build an up-to-date
+                cPython 3.12 or later.
                 """
-            interpreters module not available in this Python install.
-            If you are early to it (before 3.12 beta), you need to build an up-to-date
-            cPython 3.12 or later.
-            """
+                )
             )
-        )
 
 
 # Early declarations to avoid circular imports:
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
-
+# Crude 10MB buffer per interpreter to serialize objects back and forth:
 BFSZ = 10_000_000
+# (some of the classes developerd since won't even need this anymore - but
+# I have to dive in and make this configurable/optional)
 
 running_interpreters = weakref.WeakValueDictionary()
 
